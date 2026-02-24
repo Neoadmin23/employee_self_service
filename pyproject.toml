@@ -1,7 +1,7 @@
 [project]
 name = "employee_self_service"
 authors = [
-    { name = "", email = ""}
+    { name = "neotec", email = "neotec@info.com"}
 ]
 description = "Attendance and related submissions through mobile APP"
 requires-python = ">=3.10"
