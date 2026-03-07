@@ -605,7 +605,7 @@ def create_employee_log(log_type, location=None):
             employee=emp_data.get("name"),
             log_type=log_type,
             time=now_datetime().__str__()[:-7],
-            location=location,
+            custom_checkin_location=location,
         ).insert(ignore_permissions=True)
         update_shift_last_sync(emp_data)
         return gen_response(200, "Employee Log Added")
