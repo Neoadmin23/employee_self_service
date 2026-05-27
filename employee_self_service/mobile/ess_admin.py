@@ -103,3 +103,57 @@ def save_company_print_setting(company: str, salary_slip_print_format: str) -> d
     except Exception as e:
         frappe.log_error()
         frappe.throw(str(e))
+
+
+@frappe.whitelist()
+def get_salary_slip_print_format(salary_slip: str, language: str = "en") -> dict:
+    """
+    Get the print format for a Salary Slip based on company settings.
+    
+    Args:
+        salary_slip: Salary Slip document name
+        language: Language code (default: "en")
+    
+    Returns:
+        dict: Print format and language
+    """
+    try:
+        frappe.logger().info(f"Received salary slip: {salary_slip}")
+        
+        # Fetch Salary Slip document
+        if not frappe.db.exists("Salary Slip", salary_slip):
+            frappe.throw("Salary Slip not found")
+        
+        salary_slip_doc = frappe.get_doc("Salary Slip", salary_slip)
+        company = salary_slip_doc.company
+        
+        frappe.logger().info(f"Detected company: {company}")
+        
+        # Look in ESS Company Print Settings
+        if not company:
+            return {
+                "print_format": None,
+                "language": language
+            }
+        
+        setting = frappe.db.get_value(
+            "ESS Company Print Settings",
+            {"company": company},
+            "salary_slip_print_format",
+            as_dict=True
+        )
+        
+        if setting and setting.salary_slip_print_format:
+            frappe.logger().info(f"Selected print format: {setting.salary_slip_print_format}")
+            return {
+                "print_format": setting.salary_slip_print_format,
+                "language": language
+            }
+        
+        return {
+            "print_format": None,
+            "language": language
+        }
+    except Exception as e:
+        frappe.log_error()
+        frappe.throw(str(e))
