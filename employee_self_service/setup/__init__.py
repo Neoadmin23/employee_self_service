@@ -9,6 +9,7 @@ from employee_self_service.constants.custom_fields import CUSTOM_FIELDS
 def after_install():
     create_custom_fields()
     add_default_language_in_ess_settings()
+    create_ess_admin_manager_role()
 
 
 def create_custom_fields():
@@ -39,3 +40,12 @@ def add_default_language_in_ess_settings():
                 "ess_language", dict(language="en", language_name="English")
             )
             ess_settings.save(ignore_permissions=True)
+
+
+def create_ess_admin_manager_role():
+    """Create ESS Admin Manager role if it doesn't exist."""
+    if not frappe.db.exists("Role", "ESS Admin Manager"):
+        frappe.get_doc(
+            doctype="Role",
+            role_name="ESS Admin Manager"
+        ).insert(ignore_permissions=True)

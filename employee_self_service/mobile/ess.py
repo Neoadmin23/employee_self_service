@@ -42,16 +42,45 @@ def login(usr, pwd):
     try:
         login_manager = LoginManager()
         login_manager.authenticate(usr, pwd)
-        validate_employee(login_manager.user)
+
+        user = login_manager.user
+
+        # Check if user has ESS Admin Manager role
+        is_admin = frappe.db.exists(
+            "Has Role",
+            {
+                "parent": user,
+                "role": "ESS Admin Manager"
+            }
+        )
+
+        # Existing employee validation
+        # Skip only for admin users
+        if not is_admin:
+            validate_employee(user)
+
         login_manager.post_login()
+
         if frappe.response["message"] == "Logged In":
-            emp_data = get_employee_by_user(login_manager.user)
-            frappe.response["user"] = login_manager.user
-            frappe.response["key_details"] = generate_key(login_manager.user)
-            frappe.response["employee_id"] = emp_data.get("name")
+            # Existing functionality (unchanged)
+            frappe.response["user"] = user
+            frappe.response["key_details"] = generate_key(user)
+
+            # Existing employee functionality
+            if not is_admin:
+                emp_data = get_employee_by_user(user)
+                frappe.response["employee_id"] = emp_data.get("name")
+
+            # Additional admin info only
+            frappe.response["user_type"] = (
+                "admin" if is_admin else "employee"
+            )
+
         gen_response(200, frappe.response["message"])
+
     except frappe.AuthenticationError:
         gen_response(500, frappe.response["message"])
+
     except Exception as e:
         return exception_handel(e)
 
@@ -59,8 +88,9 @@ def login(usr, pwd):
 def validate_employee(user):
     if not frappe.db.exists("Employee", dict(user_id=user)):
         frappe.response["message"] = "Please link Employee with this user"
-        raise frappe.AuthenticationError(frappe.response["message"])
-
+        raise frappe.AuthenticationError(
+            frappe.response["message"]
+        )
 
 @frappe.whitelist()
 @ess_validate(methods=["POST"])
