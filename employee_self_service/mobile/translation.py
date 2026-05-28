@@ -75,7 +75,8 @@ def translate_dynamic_text(texts=None, target_language="ar"):
             from googletrans import Translator
         except ImportError:
             frappe.log_error(frappe.get_traceback(), "googletrans package not installed")
-            frappe.throw("Translation service failed")
+            # Return original texts as fallback
+            return [{"original": str(t), "translated": str(t)} for t in texts]
         
         translator = Translator()
         results = []
@@ -102,6 +103,7 @@ def translate_dynamic_text(texts=None, target_language="ar"):
                     "Translation Item Error"
                 )
                 
+                # Return original text as fallback
                 results.append({
                     "original": text,
                     "translated": text
@@ -115,7 +117,10 @@ def translate_dynamic_text(texts=None, target_language="ar"):
             "translate_dynamic_text Error"
         )
         
-        frappe.throw("Translation service failed")
+        # Return original texts as fallback
+        if texts:
+            return [{"original": str(t), "translated": str(t)} for t in texts]
+        return []
 
 
 @frappe.whitelist()
