@@ -45,23 +45,22 @@ def _should_skip_translation(text: str) -> bool:
     return False
 
 
-@frappe.whitelist()
-@ess_validate(methods=["POST"])
-def translate_dynamic_text(texts, target_lang="ar"):
+@frappe.whitelist(allow_guest=True)
+def translate_dynamic_text(texts=None, target_language="ar"):
     """
     Translate dynamic text using Google Translate.
     
     Args:
-        texts: List of strings to translate
-        target_lang: Target language code (default: "ar" for Arabic)
+        texts: List of strings to translate (can be JSON string or list)
+        target_language: Target language code (default: "ar" for Arabic)
     
     Returns:
-        dict: Key-value format with original text as key and translated text as value
+        list: List of objects with original and translated text
     """
     try:
-        frappe.logger().info(f"Translation request received: {len(texts) if texts else 0} texts for {target_lang}")
+        frappe.logger().info(f"Translation request received: {len(texts) if texts else 0} texts for {target_language}")
         
-        # Normalize incoming texts parameter
+        # Parse incoming JSON string safely
         if isinstance(texts, str):
             try:
                 texts = json.loads(texts)
@@ -69,78 +68,54 @@ def translate_dynamic_text(texts, target_lang="ar"):
                 texts = [texts]
         
         if not texts:
-            return gen_response(200, "Translation completed", {})
-        
-        # Remove duplicate texts
-        texts = list(set(texts))
+            return []
         
         # Import googletrans
         try:
             from googletrans import Translator
         except ImportError:
-            frappe.logger().error("googletrans package not installed")
-            return gen_response(500, "Translation service not available")
+            frappe.log_error(frappe.get_traceback(), "googletrans package not installed")
+            frappe.throw("Translation service failed")
         
         translator = Translator()
-        result = {}
-        cache_hits = 0
-        translated_count = 0
-        skipped_count = 0
-        failed_count = 0
+        results = []
         
         for text in texts:
-            # Type safety: skip non-string values
-            if not isinstance(text, str):
-                text = str(text) if text is not None else ""
-            
-            if _should_skip_translation(text):
-                result[text] = text
-                skipped_count += 1
-                continue
-            
-            # Long text protection
-            if len(text) > 3000:
-                result[text] = text
-                skipped_count += 1
-                continue
-            
-            # Check cache
-            cache_key = f"translation:{target_lang}:{text}"
-            cached_translation = frappe.cache().get_value(cache_key)
-            
-            if cached_translation:
-                result[text] = cached_translation
-                cache_hits += 1
-                continue
-            
-            # Translate
             try:
-                translation = translator.translate(text, dest=target_lang)
-                translated_text = translation.text
-                result[text] = translated_text
+                # Type safety: ensure text is a string
+                if not isinstance(text, str):
+                    text = str(text) if text is not None else ""
                 
-                # Cache the translation with 30 days expiry
-                frappe.cache().set_value(
-                    cache_key,
-                    translated_text,
-                    expires_in_sec=86400 * 30
+                translated = translator.translate(
+                    text,
+                    dest=target_language
                 )
-                translated_count += 1
-            except Exception as e:
-                frappe.logger().error(f"Translation failed for '{text}': {str(e)}")
-                result[text] = text
-                failed_count += 1
+                
+                results.append({
+                    "original": text,
+                    "translated": translated.text
+                })
+                
+            except Exception:
+                frappe.log_error(
+                    frappe.get_traceback(),
+                    "Translation Item Error"
+                )
+                
+                results.append({
+                    "original": text,
+                    "translated": text
+                })
         
-        frappe.logger().info(
-            f"Translation completed: translated={translated_count}, cached={cache_hits}, "
-            f"skipped={skipped_count}, failed={failed_count}"
+        return results
+    
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "translate_dynamic_text Error"
         )
         
-        return gen_response(200, "Translation completed", result)
-    
-    except Exception as e:
-        frappe.logger().error(f"Translation API error: {str(e)}")
-        return exception_handel(e)
+        frappe.throw("Translation service failed")
 
 
 @frappe.whitelist()
