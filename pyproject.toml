@@ -9,7 +9,8 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     "wrapt",
-    "pyfcm"
+    "pyfcm",
+    "googletrans==4.0.0rc1"
 ]
 
 [build-system]
