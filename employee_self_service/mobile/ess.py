@@ -7,6 +7,7 @@ from erpnext.accounts.utils import get_fiscal_year
 from frappe import _
 from frappe.auth import LoginManager
 from frappe.utils import (
+    cint,
     cstr,
     date_diff,
     flt,
@@ -662,7 +663,7 @@ def get_active_shift_assignment(employee, checkin_date):
 
 @frappe.whitelist()
 @ess_validate(methods=["POST"])
-def create_employee_log(log_type, latitude=None, longitude=None):
+def create_employee_log(log_type, latitude=None, longitude=None, biometric_verified=0):
 	try:
 		# Step 1: Get Employee record from current logged-in user
 		emp_data = get_employee_by_user(
@@ -671,6 +672,25 @@ def create_employee_log(log_type, latitude=None, longitude=None):
 
 		if not emp_data:
 			return gen_response(500, "Employee not found for current user.")
+
+		# Step 1a: Check if employee is on approved leave
+		leave_today = frappe.get_all(
+			"Leave Application",
+			filters={
+				"employee": emp_data.get("name"),
+				"status": "Approved",
+				"docstatus": 1,
+				"from_date": ["<=", today()],
+				"to_date": [">=", today()],
+			},
+			fields=["name"],
+		)
+		if leave_today:
+			return gen_response(500, "You are currently on approved leave. Please contact HR if check-in during leave is required.")
+
+		# Step 1b: Biometric validation
+		if not cint(biometric_verified):
+			return gen_response(500, "Biometric verification required.")
 
 		# Step 2: Validate active Shift Assignment for today
 		checkin_date = getdate(now_datetime())
@@ -748,6 +768,7 @@ def create_employee_log(log_type, latitude=None, longitude=None):
 			custom_checkin_location=shift_location,
 			latitude=latitude,
 			longitude=longitude,
+			device_id="mobile",
 		)
 		employee_checkin.insert(ignore_permissions=True)
 
