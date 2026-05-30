@@ -661,47 +661,48 @@ def get_active_shift_assignment(employee, checkin_date):
 
 
 @frappe.whitelist()
-def create_employee_log(log_type, location=None, latitude=None, longitude=None):
+def create_employee_log(log_type, latitude=None, longitude=None):
 	try:
+		# Step 1: Get Employee record from current logged-in user
 		emp_data = get_employee_by_user(
-			frappe.session.user, fields=["name", "default_shift"]
+			frappe.session.user, fields=["name", "employee_name"]
 		)
 
-		# Step 1: Get active Shift Assignment for today
+		# Step 2: Validate active Shift Assignment for today
 		checkin_date = getdate(now_datetime())
 		shift_assignment = get_active_shift_assignment(emp_data.get("name"), checkin_date)
 
 		frappe.log_error(
-			message=f"Shift assignment found for {emp_data.get('name')}: {shift_assignment}",
+			message=f"ESS Checkin - Shift Assignment lookup for {emp_data.get('name')}: {shift_assignment}",
 			title="ESS Checkin Debug - Shift Assignment"
 		)
 
 		if not shift_assignment:
-			return gen_response(500, "No active shift has been assigned to you for today.")
+			return gen_response(500, "No Shift Assignment found for today.")
 
-		# Step 2: Read shift_type and shift_location from shift assignment
+		# Step 3: Get Shift Location from Shift Assignment
 		shift_type = shift_assignment.shift_type
 		shift_location = shift_assignment.shift_location
 
 		frappe.log_error(
-			message=f"Shift type: {shift_type}, Shift location: {shift_location}",
+			message=f"ESS Checkin - Shift type: {shift_type}, Shift location: {shift_location}",
 			title="ESS Checkin Debug - Shift Details"
 		)
 
-		# Step 3: Load Shift Location document
+		# Step 4: Fetch Shift Location document
 		shift_location_doc = frappe.get_doc("Shift Location", shift_location)
 
-		# Step 4: Read latitude, longitude, checkin_radius
+		# Step 5: Read latitude, longitude, checkin_radius
 		location_latitude = shift_location_doc.latitude
 		location_longitude = shift_location_doc.longitude
 		checkin_radius = shift_location_doc.checkin_radius
 
 		frappe.log_error(
-			message=f"Shift location: {shift_location}, lat: {location_latitude}, long: {location_longitude}, radius: {checkin_radius}",
+			message=f"ESS Checkin - Shift location: {shift_location}, lat: {location_latitude}, long: {location_longitude}, radius: {checkin_radius}",
 			title="ESS Checkin Debug - Location Details"
 		)
 
-		# Step 5: Calculate distance if coordinates provided
+		# Step 6: Calculate distance between employee coordinates and assigned Shift Location
 		if latitude and longitude:
 			distance = get_distance_between_coordinates(
 				float(latitude), float(longitude),
@@ -709,40 +710,44 @@ def create_employee_log(log_type, location=None, latitude=None, longitude=None):
 			)
 
 			frappe.log_error(
-				message=f"Calculated distance: {distance} meters, allowed radius: {checkin_radius} meters",
+				message=f"ESS Checkin - Calculated distance: {distance} meters, allowed radius: {checkin_radius} meters",
 				title="ESS Checkin Debug - Distance"
 			)
 
-			# Step 6: Validate distance
+			# Step 7: Validate distance
 			if distance > checkin_radius:
-				return gen_response(
-					500,
-					_("You are outside the allowed check-in area. Distance: {0} meters. Allowed radius: {1} meters.").format(
-						round(distance), checkin_radius
-					)
-				)
+				return gen_response(500, "You are not at your assigned work location.")
 		else:
 			frappe.log_error(
-				message=f"No GPS coordinates provided for employee {emp_data.get('name')}",
+				message=f"ESS Checkin - No GPS coordinates provided for employee {emp_data.get('name')}",
 				title="ESS Checkin Debug - Missing GPS"
 			)
 
-		# Step 7: Create Employee Checkin with forced values
+		# Step 8: Create Employee Checkin with forced values
 		employee_checkin = frappe.get_doc(
 			doctype="Employee Checkin",
 			employee=emp_data.get("name"),
+			employee_name=emp_data.get("employee_name"),
 			log_type=log_type,
-			time=now_datetime().__str__()[:-7],
-			custom_checkin_location=shift_location,
+			time=now_datetime(),
 			shift=shift_type,
+			custom_checkin_location=shift_location,
 			latitude=latitude,
 			longitude=longitude,
 		)
 		employee_checkin.insert(ignore_permissions=True)
 
-		update_shift_last_sync(emp_data)
+		frappe.log_error(
+			message=f"ESS Checkin - Employee Checkin created successfully for {emp_data.get('name')}",
+			title="ESS Checkin Debug - Success"
+		)
+
 		return gen_response(200, "Employee Log Added")
 	except Exception as e:
+		frappe.log_error(
+			message=f"ESS Checkin - Error: {str(e)}",
+			title="ESS Checkin Debug - Error"
+		)
 		return exception_handel(e)
 
 
