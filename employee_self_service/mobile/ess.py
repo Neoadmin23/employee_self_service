@@ -661,12 +661,16 @@ def get_active_shift_assignment(employee, checkin_date):
 
 
 @frappe.whitelist()
+@ess_validate(methods=["POST"])
 def create_employee_log(log_type, latitude=None, longitude=None):
 	try:
 		# Step 1: Get Employee record from current logged-in user
 		emp_data = get_employee_by_user(
 			frappe.session.user, fields=["name", "employee_name"]
 		)
+
+		if not emp_data:
+			return gen_response(500, "Employee not found for current user.")
 
 		# Step 2: Validate active Shift Assignment for today
 		checkin_date = getdate(now_datetime())
@@ -690,12 +694,22 @@ def create_employee_log(log_type, latitude=None, longitude=None):
 		)
 
 		# Step 4: Fetch Shift Location document
-		shift_location_doc = frappe.get_doc("Shift Location", shift_location)
+		if not shift_location:
+			return gen_response(500, "No Shift Location assigned in Shift Assignment.")
+		
+		try:
+			shift_location_doc = frappe.get_doc("Shift Location", shift_location)
+		except Exception:
+			return gen_response(500, f"Shift Location '{shift_location}' not found.")
 
 		# Step 5: Read latitude, longitude, checkin_radius
 		location_latitude = shift_location_doc.latitude
 		location_longitude = shift_location_doc.longitude
 		checkin_radius = shift_location_doc.checkin_radius
+
+		# Validate Shift Location has required fields
+		if not location_latitude or not location_longitude or not checkin_radius:
+			return gen_response(500, "Shift Location is missing required fields (latitude, longitude, or checkin_radius).")
 
 		frappe.log_error(
 			message=f"ESS Checkin - Shift location: {shift_location}, lat: {location_latitude}, long: {location_longitude}, radius: {checkin_radius}",
