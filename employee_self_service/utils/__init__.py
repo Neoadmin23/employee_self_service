@@ -114,8 +114,10 @@ def notification_log(
     reference_name=None,
     other_info=None,
 ):
-    if frappe.session.user == recipient:
-        return
+    # ESS Notification Log creation must always occur, regardless of whether
+    # the acting user (frappe.session.user) is the same as the recipient.
+    # Push notification suppression (if any) should be handled separately
+    # in the push-notification delivery layer, not here.
     notification_log = frappe.new_doc("ESS Notification Log")
     notification_log.notification_name = notification_name
     notification_log.document_type = doctype
