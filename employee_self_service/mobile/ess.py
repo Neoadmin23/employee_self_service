@@ -1520,41 +1520,17 @@ def employee_device_info(**kwargs):
 @ess_validate(methods=["GET"])
 def notification_list():
     try:
-        single_filters = [
-            ["Push Notification", "user", "=", frappe.session.user],
-            ["Push Notification", "send_for", "=", "Single User"],
-        ]
-        notification = frappe.get_all(
-            "Push Notification",
-            filters=single_filters,
-            fields=["title", "message", "creation"],
+        notifications = frappe.get_all(
+            "ESS Notification Log",
+            filters={"recipient": frappe.session.user},
+            fields=["name", "subject", "message", "read", "creation", "reference_document", "reference_name"],
+            order_by="creation desc"
         )
-        multiple_filters = [
-            ["Notification User", "user", "=", frappe.session.user],
-            ["Push Notification", "send_for", "=", "Multiple User"],
-        ]
-        multiple_notification = frappe.get_all(
-            "Push Notification",
-            filters=multiple_filters,
-            fields=["title", "message"],
-        )
-        notification.extend(multiple_notification)
-        all_filters = [["Push Notification", "send_for", "=", "All User"]]
-
-        all_notification = frappe.get_all(
-            "Push Notification",
-            filters=all_filters,
-            fields=["title", "message"],
-        )
-
-        notification.extend(all_notification)
-
-        for notified in notification:
-            notified["creation"] = pretty_date(notified.get("creation"))
-            notified["user_image"] = frappe.get_value(
-                "User", frappe.session.user, "user_image"
-            )
-        return gen_response(200, "Push Notification", notification)
+        
+        for notification in notifications:
+            notification["creation"] = pretty_date(notification.get("creation"))
+            
+        return gen_response(200, "ESS Notification Log", notifications)
     except Exception as e:
         return exception_handel(e)
 

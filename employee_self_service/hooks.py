@@ -132,6 +132,14 @@ doc_events = {
     "Employee Checkin": {
         "after_insert": "employee_self_service.events.set_location_address"
     },
+    "Leave Application": {
+        "after_insert": "employee_self_service.notifications.leave.after_leave_application_insert",
+        "on_update": "employee_self_service.notifications.leave.after_leave_application_update"
+    },
+    "Expense Claim": {
+        "after_insert": "employee_self_service.notifications.expense.after_expense_insert",
+        "on_update": "employee_self_service.notifications.expense.after_expense_update"
+    },
     "Sales Order": {
         "on_submit": "employee_self_service.events.employee_target.create_sales_person_target_log",
         "on_cancel": "employee_self_service.events.employee_target.reverse_sales_person_target_log",
