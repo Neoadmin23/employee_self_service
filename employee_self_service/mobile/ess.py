@@ -1537,6 +1537,334 @@ def notification_list():
 
 @frappe.whitelist()
 @ess_validate(methods=["GET"])
+def get_workflow_timeline(doctype: str, docname: str):
+    """
+    Get workflow timeline information for any document (workflow-enabled or not).
+    
+    Args:
+        doctype (str): The DocType of the document (e.g., "Leave Application")
+        docname (str): The name of the document (e.g., "HR-LAP-2026-00018")
+        
+    Returns:
+        dict: Workflow timeline information in the specified format
+        
+    Example Usage:
+        curl -X GET "http://your-site.com/api/method/employee_self_service.mobile.ess.get_workflow_timeline?doctype=Leave%20Application&docname=HR-LAP-2026-00018"
+        
+    Example Response (Workflow-enabled, Approved):
+        {
+            "success": true,
+            "has_workflow": true,
+            "workflow_name": "Leave Approval Workflow",
+            "current_state": "Approved by Manager",
+            "current_status": "Approved",
+            "timeline": [
+                {
+                    "state": "Draft",
+                    "status": "completed",
+                    "action_by": null,
+                    "action_at": null
+                },
+                {
+                    "state": "Pending Manager Review",
+                    "status": "completed",
+                    "action_by": null,
+                    "action_at": null
+                },
+                {
+                    "state": "Approved by Manager",
+                    "status": "completed",
+                    "action_by": "testhr@gmail.com",
+                    "action_at": "2026-05-31 18:19:48"
+                }
+            ],
+            "pending_roles": [],
+            "is_final_state": true
+        }
+        
+    Example Response (Workflow-enabled, Pending):
+        {
+            "success": true,
+            "has_workflow": true,
+            "workflow_name": "Leave Approval Workflow",
+            "current_state": "Pending Manager Review",
+            "current_status": "Open",
+            "timeline": [
+                {
+                    "state": "Draft",
+                    "status": "completed"
+                },
+                {
+                    "state": "Pending Manager Review",
+                    "status": "current"
+                },
+                {
+                    "state": "Approved by Manager",
+                    "status": "pending"
+                }
+            ],
+            "pending_roles": [
+                "Leave Approver"
+            ],
+            "is_final_state": false
+        }
+        
+    Example Response (Non-workflow document):
+        {
+            "success": true,
+            "has_workflow": false,
+            "workflow_name": null,
+            "current_state": null,
+            "current_status": "Approved",
+            "timeline": [
+                {
+                    "state": "Created",
+                    "status": "completed"
+                },
+                {
+                    "state": "Approved",
+                    "status": "completed"
+                }
+            ],
+            "pending_roles": [],
+            "is_final_state": true
+        }
+    """
+    try:
+        # Validate that the document exists and user has read access
+        doc = frappe.get_doc(doctype, docname)
+        
+        # Initialize response structure
+        response = {
+            "success": True,
+            "has_workflow": False,
+            "workflow_name": None,
+            "current_state": None,
+            "current_status": doc.get("status", "Unknown"),
+            "timeline": [],
+            "pending_roles": [],
+            "is_final_state": True
+        }
+        
+        # Check if there's an active workflow for this doctype
+        workflow_list = frappe.get_all(
+            "Workflow",
+            filters={
+                "document_type": doctype,
+                "is_active": 1
+            },
+            fields=["name", "workflow_state_field"],
+            limit=1
+        )
+        
+        if workflow_list:
+            # Workflow exists - populate workflow-specific fields
+            workflow = frappe.get_doc("Workflow", workflow_list[0].name)
+            response["has_workflow"] = True
+            response["workflow_name"] = workflow.workflow_name
+            
+            # Get workflow state field from workflow definition
+            workflow_state_field = workflow.workflow_state_field or "workflow_state"
+            
+            # Get current workflow state from document
+            current_state = doc.get(workflow_state_field)
+            response["current_state"] = current_state
+            
+            # Get workflow states and transitions from the workflow document
+            states = [s.state for s in workflow.states]
+            transitions = workflow.transitions
+            
+            # Build state transition map for efficient lookup
+            state_transitions = {}
+            for transition in transitions:
+                if transition.state not in state_transitions:
+                    state_transitions[transition.state] = []
+                state_transitions[transition.state].append(transition)
+            
+            # Identify final states (states with no outgoing transitions)
+            final_states = set()
+            for state in states:
+                if state not in state_transitions or not state_transitions[state]:
+                    final_states.add(state)
+            
+            # Fetch workflow comments
+            comments = frappe.get_all(
+                "Comment",
+                filters={
+                    "comment_type": "Workflow",
+                    "reference_doctype": doctype,
+                    "reference_name": docname
+                },
+                fields=["content", "owner", "creation"],
+                order_by="creation asc"
+            )
+            
+            # Parse comments to extract state transitions
+            comment_events = []  # List of (state, action_by, action_at) tuples
+            for comment in comments:
+                # Try to extract state from comment content
+                # Common patterns: "State changed from X to Y", "Approved by user", etc.
+                content = comment.content
+                owner = comment.owner
+                creation = comment.creation.strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Look for state names in the comment
+                matched_state = None
+                for state in states:
+                    if state in content:
+                        matched_state = state
+                        break
+                
+                if matched_state:
+                    comment_events.append((matched_state, owner, creation))
+            
+            # Build timeline based on actual workflow progression
+            # We'll determine completed states by analyzing comments and current state
+            completed_states = set()
+            
+            # Add states that have comments indicating they were reached
+            for state, _, _ in comment_events:
+                completed_states.add(state)
+            
+            # If we have a current state, add it and potentially previous states
+            if current_state and current_state in states:
+                completed_states.add(current_state)
+                
+                # For simplicity, we'll consider all states before current in the workflow definition as completed
+                # A more sophisticated approach would analyze comment timestamps
+                try:
+                    current_index = states.index(current_state)
+                    for i in range(current_index):
+                        completed_states.add(states[i])
+                except ValueError:
+                    pass  # current_state not in states list
+            
+            # Build timeline entries
+            for state in states:
+                # Determine status - FIXED: Final states should show as completed when they match current state
+                if state == current_state:
+                    if current_state in final_states:
+                        status = "completed"
+                    else:
+                        status = "current"
+                elif state in completed_states:
+                    status = "completed"
+                else:
+                    status = "pending"
+                
+                # Find comment for this state
+                action_by = None
+                action_at = None
+                for state_comment, owner, creation in comment_events:
+                    if state_comment == state:
+                        action_by = owner
+                        action_at = creation
+                        break
+                
+                response["timeline"].append({
+                    "state": state,
+                    "status": status,
+                    "action_by": action_by,
+                    "action_at": action_at
+                })
+            
+            # Determine pending approvers (roles that can act on current state)
+            pending_roles = []
+            if current_state and current_state in state_transitions:
+                # Get outgoing transitions from current state
+                for transition in state_transitions[current_state]:
+                    # Extract allowed roles from transition
+                    allowed_roles = []
+                    if hasattr(transition, 'allowed') and transition.allowed:
+                        allowed = transition.allowed
+                        if isinstance(allowed, str):
+                            # Handle comma-separated roles or JSON-like strings
+                            if allowed.startswith('[') and allowed.endswith(']'):
+                                # Try to parse as JSON list
+                                import json
+                                try:
+                                    allowed_roles = json.loads(allowed)
+                                except:
+                                    # Fallback to comma-separated
+                                    allowed_roles = [r.strip().strip('"\'') for r in allowed[1:-1].split(',') if r.strip()]
+                            else:
+                                # Comma-separated string
+                                allowed_roles = [r.strip() for r in allowed.split(',') if r.strip()]
+                        else:
+                            allowed_roles = [str(allowed)]
+                    elif hasattr(transition, 'role') and transition.role:
+                        allowed_roles = [transition.role]
+                    
+                    pending_roles.extend(allowed_roles)
+            
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_pending_roles = []
+            for role in pending_roles:
+                if role not in seen:
+                    seen.add(role)
+                    unique_pending_roles.append(role)
+            pending_roles = unique_pending_roles
+            
+            # Determine if current state is final
+            is_final_state = current_state in final_states if current_state else True
+            
+            # Update response with workflow-specific values
+            response.update({
+                "current_state": current_state,
+                "pending_roles": pending_roles,
+                "is_final_state": is_final_state
+            })
+        
+        else:
+            # No workflow exists - create a simple timeline based on document status
+            # This is a fallback for non-workflow doctypes
+            status = doc.get("status", "Unknown")
+            
+            # Create a basic timeline with common states
+            timeline_states = ["Created", status]
+            # Remove duplicates while preserving order
+            seen = set()
+            unique_states = []
+            for state in timeline_states:
+                if state not in seen:
+                    seen.add(state)
+                    unique_states.append(state)
+            
+            # Mark all as completed since we don't have workflow tracking
+            for state in unique_states:
+                response["timeline"].append({
+                    "state": state,
+                    "status": "completed",
+                    "action_by": None,
+                    "action_at": None
+                })
+            
+            # For non-workflow docs, we consider them final state
+            response["is_final_state"] = True
+        
+        return response
+        
+    except frappe.DoesNotExistError:
+        return {
+            "success": False,
+            "message": f"Document {doctype} {docname} does not exist"
+        }
+    except frappe.PermissionError:
+        return {
+            "success": False,
+            "message": f"Insufficient permissions to access {doctype} {docname}"
+        }
+    except Exception as e:
+        frappe.log_error(f"Error in get_workflow_timeline: {frappe.get_traceback()}")
+        return {
+            "success": False,
+            "message": f"An error occurred while fetching workflow timeline: {str(e)}"
+        }
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET"])
 def get_branch():
     try:
         emp_data = get_employee_by_user(frappe.session.user, fields=["branch"])
