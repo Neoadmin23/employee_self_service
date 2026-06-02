@@ -9,12 +9,13 @@ def after_expense_insert(doc, method):
     """
     Create notification when Expense Claim is submitted.
     """
-    # Get employee user_id
+    # Get employee user_id and name
     employee_user_id = frappe.db.get_value("Employee", doc.employee, "user_id")
+    employee_name = frappe.db.get_value("Employee", doc.employee, "employee_name")
     if not employee_user_id:
         return
 
-    # Create notification
+    # Notify Employee
     create_notification(
         recipient=employee_user_id,
         subject="Expense Claim Submitted",
@@ -22,6 +23,32 @@ def after_expense_insert(doc, method):
         reference_doctype=doc.doctype,
         reference_name=doc.name
     )
+
+    # Notify Expense Approver
+    if doc.expense_approver:
+        approver_user_id = frappe.db.get_value("Employee", doc.expense_approver, "user_id")
+        if approver_user_id:
+            create_notification(
+                recipient=approver_user_id,
+                subject="New Expense Claim Request",
+                message=f"{employee_name} submitted an expense claim.",
+                reference_doctype=doc.doctype,
+                reference_name=doc.name
+            )
+
+    # Notify HR Managers
+    hr_managers = frappe.get_all("Has Role", filters={"role": "HR Manager"}, fields=["parent"])
+    for hr in hr_managers:
+        hr_user_id = hr.parent
+        # Optionally, check if the user is enabled
+        if frappe.db.get_value("User", hr_user_id, "enabled"):
+            create_notification(
+                recipient=hr_user_id,
+                subject="New Expense Claim Request",
+                message=f"{employee_name} submitted an expense claim.",
+                reference_doctype=doc.doctype,
+                reference_name=doc.name
+            )
 
 
 def after_expense_update(doc, method):

@@ -3,6 +3,7 @@
 
 import frappe
 from frappe import _
+from frappe.utils import now_datetime, add_to_date
 
 def create_notification(recipient, subject, message, reference_doctype=None, reference_name=None):
     """
@@ -16,9 +17,24 @@ def create_notification(recipient, subject, message, reference_doctype=None, ref
         reference_name (str, optional): The name of the reference document.
 
     Returns:
-        str: The name of the created ESS Notification Log document.
+        str: The name of the created ESS Notification Log document, or None if duplicate.
     """
     try:
+        # Check for duplicate notification in the last 5 minutes
+        five_minutes_ago = add_to_date(now_datetime(), minutes=-5)
+        duplicate_exists = frappe.db.exists(
+            "ESS Notification Log",
+            {
+                "recipient": recipient,
+                "subject": subject,
+                "reference_name": reference_name,
+                "creation": [">=", five_minutes_ago],
+            }
+        )
+        if duplicate_exists:
+            frappe.logger().info(f"Duplicate ESS Notification Log skipped for recipient: {recipient}, subject: {subject}, reference_name: {reference_name}")
+            return None
+
         # Create a new ESS Notification Log document
         notification_log = frappe.get_doc({
             "doctype": "ESS Notification Log",
