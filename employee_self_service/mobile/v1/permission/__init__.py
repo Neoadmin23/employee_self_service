@@ -84,6 +84,26 @@ def get_user_roles(user):
     return frappe.get_roles(user)
 
 
+@frappe.whitelist()
+def get_current_user_roles():
+    """Get current authenticated user's roles, excluding 'All' and 'Guest'."""
+    try:
+        roles = frappe.get_roles(frappe.session.user)
+
+        excluded_roles = [
+            "All",
+            "Guest"
+        ]
+
+        roles = [r for r in roles if r not in excluded_roles]
+
+        return roles
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "Get Current User Roles")
+        raise
+
+
 def get_bulk_doctype_read_permissions(doctype_list, user_roles):
     """
     Bulk fetch DocPerm entries and return a dict of
