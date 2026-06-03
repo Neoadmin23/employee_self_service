@@ -26,28 +26,22 @@ def after_leave_application_insert(doc, method):
 
     # Notify Leave Approver
     if doc.leave_approver:
+
         frappe.logger().info(
             f"[LEAVE NOTIFICATION] Employee: {doc.employee}"
         )
 
         frappe.logger().info(
-            f"[LEAVE NOTIFICATION] Leave Approver Employee: {doc.leave_approver}"
+            f"[LEAVE NOTIFICATION] Leave Approver User: {doc.leave_approver}"
         )
 
-        approver_user_id = frappe.db.get_value("Employee", doc.leave_approver, "user_id")
-
-        frappe.logger().info(
-            f"[LEAVE NOTIFICATION] Leave Approver User: {approver_user_id}"
+        create_notification(
+            recipient=doc.leave_approver,
+            subject="New Leave Application Request",
+            message=f"{employee_name} submitted a leave application.",
+            reference_doctype=doc.doctype,
+            reference_name=doc.name
         )
-
-        if approver_user_id:
-            create_notification(
-                recipient=approver_user_id,
-                subject="New Leave Application Request",
-                message=f"{employee_name} submitted a leave application.",
-                reference_doctype=doc.doctype,
-                reference_name=doc.name
-            )
 
 
 def after_leave_application_update(doc, method):
