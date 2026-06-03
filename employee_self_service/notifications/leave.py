@@ -26,24 +26,23 @@ def after_leave_application_insert(doc, method):
 
     # Notify Leave Approver
     if doc.leave_approver:
+        frappe.logger().info(
+            f"[LEAVE NOTIFICATION] Employee: {doc.employee}"
+        )
+
+        frappe.logger().info(
+            f"[LEAVE NOTIFICATION] Leave Approver Employee: {doc.leave_approver}"
+        )
+
         approver_user_id = frappe.db.get_value("Employee", doc.leave_approver, "user_id")
+
+        frappe.logger().info(
+            f"[LEAVE NOTIFICATION] Leave Approver User: {approver_user_id}"
+        )
+
         if approver_user_id:
             create_notification(
                 recipient=approver_user_id,
-                subject="New Leave Application Request",
-                message=f"{employee_name} submitted a leave application.",
-                reference_doctype=doc.doctype,
-                reference_name=doc.name
-            )
-
-    # Notify HR Managers
-    hr_managers = frappe.get_all("Has Role", filters={"role": "HR Manager"}, fields=["parent"])
-    for hr in hr_managers:
-        hr_user_id = hr.parent
-        # Optionally, check if the user is enabled
-        if frappe.db.get_value("User", hr_user_id, "enabled"):
-            create_notification(
-                recipient=hr_user_id,
                 subject="New Leave Application Request",
                 message=f"{employee_name} submitted a leave application.",
                 reference_doctype=doc.doctype,
