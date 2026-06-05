@@ -312,21 +312,7 @@ def get_leave_approval_details(name):
         if not frappe.db.exists("Leave Application", name):
             frappe.throw("Leave Application not found")
 
-        leave = frappe.get_doc(
-            "Leave Application",
-            name,
-            [
-                "name",
-                "employee",
-                "employee_name",
-                "leave_type",
-                "from_date",
-                "to_date",
-                "total_leave_days",
-                "description",
-                "status",
-            ],
-        )
+        leave = frappe.get_doc("Leave Application", name)
 
         result = {
             "name": leave.name,
@@ -377,20 +363,7 @@ def get_travel_approval_details(name):
         if not frappe.db.exists("Travel Request", name):
             frappe.throw("Travel Request not found")
 
-        travel = frappe.get_doc(
-            "Travel Request",
-            name,
-            [
-                "name",
-                "employee",
-                "employee_name",
-                "purpose_of_travel",
-                "travel_type",
-                "company",
-                "description",
-                "docstatus",
-            ],
-        )
+        travel = frappe.get_doc("Travel Request", name)
 
         result = {
             "name": travel.name,
@@ -535,26 +508,7 @@ def get_attendance_approval_details(name):
         if not frappe.db.exists("Attendance Request", name):
             frappe.throw("Attendance Request not found")
 
-        request = frappe.get_doc(
-            "Attendance Request",
-            name,
-            [
-                "name",
-                "employee",
-                "employee_name",
-                "department",
-                "company",
-                "from_date",
-                "to_date",
-                "half_day",
-                "half_day_date",
-                "reason",
-                "explanation",
-                "shift",
-                "include_holidays",
-                "docstatus",
-            ],
-        )
+        request = frappe.get_doc("Attendance Request", name)
 
         result = {
             "name": request.name,
@@ -641,24 +595,7 @@ def get_employee_details(employee):
         if not frappe.db.exists("Employee", employee):
             frappe.throw("Employee not found")
 
-        emp = frappe.get_doc(
-            "Employee",
-            employee,
-            [
-                "name",
-                "employee_name",
-                "designation",
-                "department",
-                "company",
-                "date_of_joining",
-                "status",
-                "user_id",
-                "personal_email",
-                "company_email",
-                "mobile_no",
-                "image",
-            ],
-        )
+        emp = frappe.get_doc("Employee", employee)
 
         result = {
             "employee": emp.name,

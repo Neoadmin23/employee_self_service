@@ -159,3 +159,47 @@ def _sync_single_to_frappe(recipient, subject, message, reference_document, refe
         )
         # Don't raise - background job failures are logged and can be retried
         # Raising would cause the job to be retried unnecessarily
+
+
+@frappe.whitelist()
+def mark_notification_as_read(notification_name):
+    """
+    Mark an ESS Notification Log as read.
+
+    Args:
+        notification_name (str): The name of the ESS Notification Log document.
+
+    Returns:
+        dict: Success response with notification details.
+    """
+    try:
+        # Fetch the ESS Notification Log document
+        if not frappe.db.exists("ESS Notification Log", notification_name):
+            frappe.throw(_("Notification Log not found"))
+
+        notification = frappe.get_doc("ESS Notification Log", notification_name)
+
+        # Validate that the recipient matches the current user
+        if notification.recipient != frappe.session.user:
+            frappe.throw(_("You are not authorized to mark this notification as read"))
+
+        # Update read status
+        notification.read = 1
+
+        # Save with ignore_permissions
+        notification.save(ignore_permissions=True)
+
+        # Commit the transaction
+        frappe.db.commit()
+
+        return {
+            "success": True,
+            "notification": notification_name,
+            "read": 1
+        }
+    except Exception as e:
+        frappe.log_error(
+            title=_("Failed to mark notification as read"),
+            message=frappe.get_traceback()
+        )
+        frappe.throw(str(e))
