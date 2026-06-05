@@ -671,7 +671,7 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 		)
 
 		if not emp_data:
-			return gen_response(500, "Employee not found for current user.")
+			return gen_response(500, "Your employee profile could not be found. Please contact HR or system administrator.")
 
 		# Step 1a: Check if employee is on approved leave
 		leave_today = frappe.get_all(
@@ -686,11 +686,11 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 			fields=["name"],
 		)
 		if leave_today:
-			return gen_response(500, "You are currently on approved leave. Please contact HR if check-in during leave is required.")
+			return gen_response(500, "You are currently on approved leave and cannot check in today. If this is incorrect, please contact HR.")
 
 		# Step 1b: Biometric validation
 		if not cint(biometric_verified):
-			return gen_response(500, "Biometric verification required.")
+			return gen_response(500, "Biometric verification is required before check-in. Please complete fingerprint or face verification and try again.")
 
 		# Step 2: Validate active Shift Assignment for today
 		checkin_date = getdate(now_datetime())
@@ -702,7 +702,7 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 		)
 
 		if not shift_assignment:
-			return gen_response(500, "No Shift Assignment found for today.")
+			return gen_response(500, "No shift has been assigned to you for today. Please contact HR.")
 
 		# Step 3: Get Shift Location from Shift Assignment
 		shift_type = shift_assignment.shift_type
@@ -715,12 +715,12 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 
 		# Step 4: Fetch Shift Location document
 		if not shift_location:
-			return gen_response(500, "No Shift Location assigned in Shift Assignment.")
+			return gen_response(500, "Your assigned shift does not have a work location configured. Please contact HR.")
 		
 		try:
 			shift_location_doc = frappe.get_doc("Shift Location", shift_location)
 		except Exception:
-			return gen_response(500, f"Shift Location '{shift_location}' not found.")
+			return gen_response(500, "The assigned work location could not be found. Please contact your HR.")
 
 		# Step 5: Read latitude, longitude, checkin_radius
 		location_latitude = shift_location_doc.latitude
@@ -729,7 +729,7 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 
 		# Validate Shift Location has required fields
 		if not location_latitude or not location_longitude or not checkin_radius:
-			return gen_response(500, "Shift Location is missing required fields (latitude, longitude, or checkin_radius).")
+			return gen_response(500, "The work location is not configured correctly for attendance tracking. Please contact HR.")
 
 		frappe.log_error(
 			message=f"ESS Checkin - Shift location: {shift_location}, lat: {location_latitude}, long: {location_longitude}, radius: {checkin_radius}",
@@ -750,12 +750,13 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 
 			# Step 7: Validate distance
 			if distance > checkin_radius:
-				return gen_response(500, "You are not at your assigned work location.")
+				return gen_response(500, f"You are outside the allowed check-in area. You are currently {round(distance)} meters away from your assigned work location.")
 		else:
 			frappe.log_error(
 				message=f"ESS Checkin - No GPS coordinates provided for employee {emp_data.get('name')}",
 				title="ESS Checkin Debug - Missing GPS"
 			)
+			return gen_response(500, "Location access is required for attendance. Please enable GPS and try again.")
 
 		# Step 8: Create Employee Checkin with forced values
 		employee_checkin = frappe.get_doc(
@@ -777,13 +778,13 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 			title="ESS Checkin Debug - Success"
 		)
 
-		return gen_response(200, "Employee Log Added")
+		return gen_response(200, "Check-in recorded successfully.")
 	except Exception as e:
 		frappe.log_error(
 			message=f"ESS Checkin - Error: {str(e)}",
 			title="ESS Checkin Debug - Error"
 		)
-		return exception_handel(e)
+		return gen_response(500, "Unable to process your attendance request at this time. Please try again later or contact support if the issue persists.")
 
 
 def update_shift_last_sync(emp_data):
@@ -2346,5 +2347,210 @@ def get_task_status_list():
         if task_status:
             task_status = task_status.split("\n")
         return gen_response(200, "Status get successfully", task_status)
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET", "POST"])
+def get_task_dashboard_stats():
+    try:
+        emp_data = get_employee_by_user(frappe.session.user)
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+
+        filters = {"_assign": ["like", f"%{frappe.session.user}%"]}
+
+        total = frappe.db.count("Task", filters)
+        open = frappe.db.count("Task", {**filters, "status": "Open"})
+        working = frappe.db.count("Task", {**filters, "status": "Working"})
+        completed = frappe.db.count("Task", {**filters, "status": "Completed"})
+        overdue = frappe.db.count(
+            "Task",
+            {
+                **filters,
+                "exp_end_date": ["<", today()],
+                "status": ["!=", "Completed"],
+            },
+        )
+
+        stats = {
+            "total": total,
+            "open": open,
+            "working": working,
+            "completed": completed,
+            "overdue": overdue,
+        }
+        return gen_response(200, "Task Dashboard Stats Get Successfully", stats)
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET", "POST"])
+def add_task_comment(task_id=None, comment=None):
+    try:
+        if not task_id:
+            return gen_response(500, "task_id is required")
+        if not comment:
+            return gen_response(500, "comment is required")
+
+        emp_data = get_employee_by_user(frappe.session.user)
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+
+        task = frappe.get_value(
+            "Task",
+            {"name": task_id},
+            ["_assign"],
+            as_dict=True,
+        )
+        if not task:
+            return gen_response(500, "Task not found")
+
+        if frappe.session.user not in (task.get("_assign") or ""):
+            return gen_response(500, "You are not authorized to comment on this task")
+
+        frappe.get_doc(
+            {
+                "doctype": "Comment",
+                "reference_doctype": "Task",
+                "reference_name": task_id,
+                "comment_type": "Comment",
+                "content": comment,
+                "comment_email": frappe.session.user,
+                "comment_by": frappe.db.get_value(
+                    "User", frappe.session.user, "full_name"
+                ),
+            }
+        ).insert(ignore_permissions=True)
+
+        return gen_response(200, "Comment added successfully")
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET"])
+def get_travel_requests():
+    try:
+        emp_data = get_employee_by_user(frappe.session.user)
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+        travel_requests = frappe.get_all(
+            "Travel Request",
+            filters={"employee": emp_data.get("name")},
+            fields=[
+                "name",
+                "purpose_of_travel",
+                "DATE_FORMAT(from_date, '%d-%m-%Y') as from_date",
+                "DATE_FORMAT(to_date, '%d-%m-%Y') as to_date",
+                "status",
+            ],
+        )
+        return gen_response(200, "Travel Request Get Successfully", travel_requests)
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET"])
+def get_travel_request_details(name=None):
+    try:
+        if not name:
+            return gen_response(500, "Travel Request name is required", [])
+        emp_data = get_employee_by_user(frappe.session.user)
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+        travel_request = frappe.get_doc("Travel Request", name)
+        if travel_request.employee != emp_data.get("name"):
+            return gen_response(500, "You are not authorized to view this travel request")
+        return gen_response(200, "Travel Request Details Get Successfully", travel_request)
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["POST"])
+def create_travel_request(**kwargs):
+    try:
+        emp_data = get_employee_by_user(
+            frappe.session.user, fields=["name", "company"]
+        )
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+        data = kwargs
+        travel_request = frappe.get_doc(
+            doctype="Travel Request",
+            purpose_of_travel=data.get("purpose_of_travel"),
+            travel_type=data.get("travel_type"),
+            company=emp_data.get("company"),
+            employee=emp_data.get("name"),
+            from_date=data.get("from_date"),
+            to_date=data.get("to_date"),
+            destination=data.get("destination"),
+        ).insert()
+        return gen_response(200, "Travel Request Created Successfully", travel_request)
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["POST"])
+def cancel_travel_request(name=None):
+    try:
+        if not name:
+            return gen_response(500, "Travel Request name is required")
+        emp_data = get_employee_by_user(frappe.session.user)
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+        travel_request = frappe.get_doc("Travel Request", name)
+        if travel_request.employee != emp_data.get("name"):
+            return gen_response(500, "You are not authorized to cancel this travel request")
+        if travel_request.status not in ["Draft", "Pending"]:
+            return gen_response(500, "Only Draft and Pending travel requests can be cancelled")
+        travel_request.status = "Cancelled"
+        travel_request.save(ignore_permissions=True)
+        return gen_response(200, "Travel Request Cancelled Successfully")
+    except Exception as e:
+        return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET"])
+def get_travel_dashboard_stats():
+    try:
+        emp_data = get_employee_by_user(frappe.session.user)
+        if not len(emp_data) >= 1:
+            return gen_response(500, "Employee does not exists")
+        validate_employee_data(emp_data)
+
+        total = frappe.db.count("Travel Request", {"employee": emp_data.get("name")})
+        approved = frappe.db.count(
+            "Travel Request",
+            {"employee": emp_data.get("name"), "status": "Approved"},
+        )
+        pending = frappe.db.count(
+            "Travel Request",
+            {"employee": emp_data.get("name"), "status": "Pending"},
+        )
+        rejected = frappe.db.count(
+            "Travel Request",
+            {"employee": emp_data.get("name"), "status": "Rejected"},
+        )
+
+        stats = {
+            "total": total,
+            "approved": approved,
+            "pending": pending,
+            "rejected": rejected,
+        }
+        return gen_response(200, "Travel Dashboard Stats Get Successfully", stats)
     except Exception as e:
         return exception_handel(e)
