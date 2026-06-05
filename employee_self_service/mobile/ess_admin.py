@@ -170,7 +170,7 @@ def get_admin_dashboard_stats():
         pending_attendance = frappe.db.count(
             "Employee Checkin", {"attendance": ["is", "not set"]}
         )
-        pending_travel = frappe.db.count("Travel Request", {"status": "Open"})
+        pending_travel = frappe.db.count("Travel Request", {"docstatus": 0})
         pending_tasks = frappe.db.count("Task", {"status": ["!=", "Completed"]})
 
         return {
@@ -215,14 +215,14 @@ def get_pending_travel_approvals():
     try:
         travels = frappe.get_all(
             "Travel Request",
-            filters={"status": "Open"},
+            filters={"docstatus": 0},
             fields=[
                 "name",
                 "employee",
                 "purpose_of_travel",
                 "DATE_FORMAT(from_date, '%d-%m-%Y') as from_date",
                 "DATE_FORMAT(to_date, '%d-%m-%Y') as to_date",
-                "status",
+                "docstatus",
             ],
         )
         return travels
@@ -381,23 +381,26 @@ def get_travel_approval_details(name):
             "Travel Request",
             name,
             [
+                "name",
                 "employee",
+                "employee_name",
                 "purpose_of_travel",
-                "from_date",
-                "to_date",
+                "travel_type",
+                "company",
                 "description",
-                "status",
+                "docstatus",
             ],
         )
 
         result = {
             "name": travel.name,
             "employee": travel.employee,
+            "employee_name": travel.employee_name,
             "purpose_of_travel": travel.purpose_of_travel,
-            "from_date": travel.from_date.strftime("%d-%m-%Y") if travel.from_date else None,
-            "to_date": travel.to_date.strftime("%d-%m-%Y") if travel.to_date else None,
+            "travel_type": travel.travel_type,
+            "company": travel.company,
             "description": travel.description,
-            "status": travel.status,
+            "docstatus": travel.docstatus,
         }
         return result
     except Exception as e:
@@ -411,7 +414,26 @@ def approve_travel_request(name, remarks=None):
         if not frappe.db.exists("Travel Request", name):
             frappe.throw("Travel Request not found")
 
-        _apply_approval_action("Travel Request", name, "approve", remarks)
+        doc = frappe.get_doc("Travel Request", name)
+
+        workflow = frappe.get_all(
+            "Workflow",
+            filters={"document_type": "Travel Request", "is_active": 1},
+            fields=["name", "workflow_state_field"],
+            limit=1,
+        )
+
+        if workflow:
+            workflow_state_field = workflow[0].workflow_state_field or "workflow_state"
+            if hasattr(doc, workflow_state_field):
+                setattr(doc, workflow_state_field, "Approved")
+            if remarks and hasattr(doc, "remarks"):
+                doc.remarks = remarks
+            doc.save(ignore_permissions=True)
+        else:
+            if doc.docstatus == 0:
+                doc.submit()
+
         return {"success": True, "message": "Travel request approved successfully"}
     except Exception as e:
         frappe.log_error()
@@ -424,7 +446,26 @@ def reject_travel_request(name, remarks=None):
         if not frappe.db.exists("Travel Request", name):
             frappe.throw("Travel Request not found")
 
-        _apply_approval_action("Travel Request", name, "reject", remarks)
+        doc = frappe.get_doc("Travel Request", name)
+
+        workflow = frappe.get_all(
+            "Workflow",
+            filters={"document_type": "Travel Request", "is_active": 1},
+            fields=["name", "workflow_state_field"],
+            limit=1,
+        )
+
+        if workflow:
+            workflow_state_field = workflow[0].workflow_state_field or "workflow_state"
+            if hasattr(doc, workflow_state_field):
+                setattr(doc, workflow_state_field, "Rejected")
+            if remarks and hasattr(doc, "remarks"):
+                doc.remarks = remarks
+            doc.save(ignore_permissions=True)
+        else:
+            if doc.docstatus == 1:
+                doc.cancel()
+
         return {"success": True, "message": "Travel request rejected successfully"}
     except Exception as e:
         frappe.log_error()

@@ -134,11 +134,16 @@ doc_events = {
     },
     "Leave Application": {
         "after_insert": "employee_self_service.notifications.leave.after_leave_application_insert",
+        "on_submit": "employee_self_service.notifications.leave.after_leave_application_submit",
         "on_update": "employee_self_service.notifications.leave.after_leave_application_update"
     },
     "Expense Claim": {
         "after_insert": "employee_self_service.notifications.expense.after_expense_insert",
+        "on_submit": "employee_self_service.notifications.expense.after_expense_submit",
         "on_update": "employee_self_service.notifications.expense.after_expense_update"
+    },
+    "ESS Notification Log": {
+        "after_insert": "employee_self_service.notifications.manager.sync_to_frappe_notification_log"
     },
     "Sales Order": {
         "on_submit": "employee_self_service.events.employee_target.create_sales_person_target_log",
