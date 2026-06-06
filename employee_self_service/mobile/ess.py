@@ -2555,3 +2555,72 @@ def get_travel_dashboard_stats():
         return gen_response(200, "Travel Dashboard Stats Get Successfully", stats)
     except Exception as e:
         return exception_handel(e)
+
+
+@frappe.whitelist()
+@ess_validate(methods=["GET"])
+def get_leave_calendar_details(leave_application=None):
+    """
+    Get leave calendar details for a Leave Application.
+    Reuses CentralHRMS get_leave_calendar_data() logic.
+
+    Args:
+        leave_application (str): Leave Application document name
+
+    Returns:
+        dict: Calendar data including leave details, holidays, weekends, effective days, etc.
+    """
+    try:
+        if not leave_application:
+            return gen_response(500, "leave_application is required", [])
+
+        # Load Leave Application document
+        leave_doc = frappe.get_doc("Leave Application", leave_application)
+
+        # Validate employee has access to this leave application
+        emp_data = get_employee_by_user(frappe.session.user)
+        if leave_doc.employee != emp_data.get("name"):
+            return gen_response(500, "You are not authorized to view this leave application")
+
+        # Reuse CentralHRMS get_leave_calendar_data() - exact import path
+        from centralhrms.api import get_leave_calendar_data
+
+        # Call the existing function with leave application data
+        calendar_data = get_leave_calendar_data(
+            employee=leave_doc.employee,
+            from_date=leave_doc.from_date,
+            to_date=leave_doc.to_date,
+            leave_type=leave_doc.leave_type
+        )
+
+        # Add leave application specific details
+        result = {
+            "leave_details": {
+                "name": leave_doc.name,
+                "leave_type": leave_doc.leave_type,
+                "from_date": str(leave_doc.from_date),
+                "to_date": str(leave_doc.to_date),
+                "total_leave_days": leave_doc.total_leave_days,
+                "status": leave_doc.status,
+                "description": leave_doc.description
+            },
+            "calendar_days": calendar_data.get("total_calendar_days"),
+            "public_holidays": calendar_data.get("public_holidays", []),
+            "weekly_offs": calendar_data.get("weekly_offs", []),
+            "effective_leave_days": calendar_data.get("effective_days"),
+            "bridge_policy_data": {
+                "bridge_fires": calendar_data.get("bridge_fires"),
+                "previous_leave": calendar_data.get("bridge_previous_leave")
+            },
+            "existing_leaves": calendar_data.get("existing_leaves", []),
+            "sick_leave_slab": calendar_data.get("sick_slab")
+        }
+
+        return gen_response(200, "Leave Calendar Details", result)
+
+    except frappe.DoesNotExistError:
+        return gen_response(500, f"Leave Application {leave_application} does not exist")
+    except frappe.PermissionError:
+        return gen_response(500, "Insufficient permissions")
+    except Exception as e:
+        return exception_handel(e)
