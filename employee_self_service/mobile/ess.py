@@ -86,6 +86,34 @@ def login(usr, pwd):
         return exception_handel(e)
 
 
+@frappe.whitelist(allow_guest=True, methods=["POST"])
+def forgot_password(email=None):
+    try:
+        if not email:
+            return gen_response(500, "Email is required")
+
+        user = frappe.db.get_value(
+            "User",
+            {"email": email},
+            ["name", "enabled"],
+            as_dict=True,
+        )
+
+        if not user:
+            return gen_response(500, "User not found with this email")
+
+        if not user.enabled:
+            return gen_response(500, "User is disabled")
+
+        from frappe.core.doctype.user.user import reset_password
+
+        reset_password(user.name)
+
+        return gen_response(200, "Password reset link sent successfully")
+    except Exception as e:
+        return exception_handel(e)
+
+
 def validate_employee(user):
     if not frappe.db.exists("Employee", dict(user_id=user)):
         frappe.response["message"] = "Please link Employee with this user"
