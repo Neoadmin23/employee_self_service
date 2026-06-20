@@ -2604,15 +2604,7 @@ def get_leave_calendar_details(leave_application=None):
 
         # Load Leave Application document
         leave_doc = frappe.get_doc("Leave Application", leave_application)
-
-        # Validate employee has access to this leave application
-        emp_data = get_employee_by_user(frappe.session.user)
-        
-        if not emp_data:
-            return gen_response(500, "Employee not found for current user")
-        
-        if leave_doc.employee != emp_data.get("name"):
-            return gen_response(500, "You are not authorized to view this leave application")
+        #removed condition
 
         # Reuse CentralHRMS get_leave_calendar_data() - exact import path
         from centralhrms.api import get_leave_calendar_data
