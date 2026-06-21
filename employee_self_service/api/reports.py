@@ -203,16 +203,15 @@ def get_employee_checkins(from_date=None, to_date=None):
 			"log_type",
 			"shift",
 			"location",
-		]
-
-		checkin_filters = [
-			["Employee Checkin", "employee", "=", emp_data.get("name")],
-			["Employee Checkin", "time", "between", [from_date, to_date]],
+			"custom_checkin_location",
 		]
 
 		checkin_list = frappe.get_all(
 			"Employee Checkin",
-			filters=checkin_filters,
+			filters={
+				"employee": emp_data.get("name"),
+				"time": ["between", [f"{from_date} 00:00:00", f"{to_date} 23:59:59"]],
+			},
 			fields=checkin_fields,
 			order_by="time desc",
 		)
@@ -229,7 +228,7 @@ def get_employee_checkins(from_date=None, to_date=None):
 				"time": _format_checkin_time(checkin.time, convert_tz, system_timezone, user_time_zone),
 				"log_type": checkin.log_type,
 				"shift": checkin.shift,
-				"location": checkin.location,
+				"location": checkin.custom_checkin_location or checkin.location,
 			})
 
 		return gen_response(200, "Check-in report fetched successfully", {
