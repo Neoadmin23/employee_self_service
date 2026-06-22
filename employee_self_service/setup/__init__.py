@@ -12,6 +12,11 @@ def after_install():
     create_ess_admin_manager_role()
 
 
+def after_migrate():
+    after_install()
+    create_default_document_masters()
+
+
 def create_custom_fields():
     # Removed print statement: Creating custom fields
     _create_custom_fields(get_all_custom_fields(), ignore_validate=True)
@@ -49,3 +54,56 @@ def create_ess_admin_manager_role():
             doctype="Role",
             role_name="ESS Admin Manager"
         ).insert(ignore_permissions=True)
+
+
+def create_default_document_masters():
+    categories = [
+        "Identity",
+        "Employment",
+        "Education",
+        "Banking",
+        "Medical",
+        "Immigration",
+        "Other",
+    ]
+
+    document_types = [
+        {"name": "Passport", "category": "Identity"},
+        {"name": "Aadhaar", "category": "Identity"},
+        {"name": "PAN Card", "category": "Identity"},
+        {"name": "Emirates ID", "category": "Identity"},
+        {"name": "Driving License", "category": "Identity"},
+        {"name": "Visa", "category": "Identity"},
+        {"name": "Resume", "category": "Employment"},
+        {"name": "Offer Letter", "category": "Employment"},
+        {"name": "Employment Contract", "category": "Employment"},
+        {"name": "Experience Letter", "category": "Employment"},
+        {"name": "Degree Certificate", "category": "Education"},
+        {"name": "Diploma Certificate", "category": "Education"},
+        {"name": "Training Certificate", "category": "Education"},
+        {"name": "Cancelled Cheque", "category": "Banking"},
+        {"name": "Bank Passbook", "category": "Banking"},
+        {"name": "IBAN Letter", "category": "Banking"},
+        {"name": "Medical Certificate", "category": "Medical"},
+        {"name": "Insurance Card", "category": "Medical"},
+        {"name": "Work Permit", "category": "Immigration"},
+        {"name": "Residence Permit", "category": "Immigration"},
+        {"name": "Other", "category": "Other"},
+    ]
+
+    for category in categories:
+        if not frappe.db.exists("Document Category", {"category_name": category}):
+            frappe.get_doc({
+                "doctype": "Document Category",
+                "category_name": category,
+            }).insert(ignore_permissions=True)
+
+    for doc_type in document_types:
+        if not frappe.db.exists("Document Type", {"document_type_name": doc_type["name"]}):
+            frappe.get_doc({
+                "doctype": "Document Type",
+                "document_type_name": doc_type["name"],
+                "document_category": doc_type["category"],
+            }).insert(ignore_permissions=True)
+
+    frappe.db.commit()

@@ -12,7 +12,7 @@ required_apps = ["hrms"]
 # ------------------
 
 after_install = "employee_self_service.setup.after_install"
-after_migrate = "employee_self_service.setup.after_install"
+after_migrate = "employee_self_service.setup.after_migrate"
 
 
 # include js, css files in header of desk.html

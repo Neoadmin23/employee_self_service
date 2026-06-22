@@ -6,13 +6,15 @@
  "doctype": "DocType",
  "editable_grid": 1,
  "engine": "InnoDB",
- "field_order": [
-  "employee_no",
-  "employee_name",
-  "column_break_vceov",
-  "attachement",
-  "title"
- ],
+  "field_order": [
+   "employee_no",
+   "employee_name",
+   "column_break_vceov",
+   "attachement",
+   "title",
+   "document_category",
+   "document_type"
+  ],
  "fields": [
   {
    "fieldname": "employee_no",
@@ -39,6 +41,20 @@
    "fieldname": "title",
    "fieldtype": "Data",
    "label": "Title"
+  },
+  {
+   "fieldname": "document_category",
+   "fieldtype": "Link",
+   "label": "Document Category",
+   "options": "Document Category",
+   "reqd": 1
+  },
+  {
+   "fieldname": "document_type",
+   "fieldtype": "Link",
+   "label": "Document Type",
+   "options": "Document Type",
+   "reqd": 1
   }
  ],
  "index_web_pages_for_search": 1,
