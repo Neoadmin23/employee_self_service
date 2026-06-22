@@ -1,4 +1,5 @@
 import frappe
+import mimetypes
 
 from employee_self_service.mobile.api_utils import (
     ess_validate,
@@ -222,20 +223,19 @@ def download_employee_document():
 
         file_doc = file_doc[0]
 
-        file_url = file_doc.file_url
-        if file_url and file_url.startswith("/"):
-            file_url = f"{frappe.utils.get_url()}{file_url}"
+        file_doc_full = frappe.get_doc("File", file_doc.name)
+        file_path = file_doc_full.get_full_path()
 
-        return gen_response(
-            200,
-            "File details fetched successfully",
-            {
-                "document_id": document.name,
-                "document_name": document.document_type,
-                "file_name": file_doc.file_name,
-                "file_url": file_url,
-            },
-        )
+        with open(file_path, "rb") as f:
+            filecontent = f.read()
+
+        frappe.local.response.filename = file_doc.file_name
+        frappe.local.response.filecontent = filecontent
+        frappe.local.response.type = "download"
+
+        content_type = mimetypes.guess_type(file_doc.file_name)[0]
+        if content_type:
+            frappe.local.response.content_type = content_type
     except Exception as e:
         return exception_handel(e)
 
