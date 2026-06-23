@@ -20,7 +20,6 @@ def get_loan_products():
             filters={"disabled": 0},
             fields=[
                 "name",
-                "loan_category",
                 "is_term_loan",
                 "rate_of_interest",
                 "maximum_loan_amount",
@@ -104,7 +103,6 @@ def get_loan_detail(loan):
             "applicant",
             "applicant_name",
             "loan_product",
-            "loan_category",
             "loan_amount",
             "status",
             "rate_of_interest",
@@ -163,7 +161,7 @@ def get_repayment_schedule(loan):
         schedule = frappe.get_all(
             "Repayment Schedule",
             filters={"parent": schedule_doc[0]["name"]},
-            fields=["payment_date","principal_amount","interest_amount","total_payment","balance_loan_amount","demand_generated"],
+            fields=["payment_date","principal_amount","interest_amount","total_payment","balance_loan_amount","is_accrued"],
             order_by="idx asc",
         )
 
