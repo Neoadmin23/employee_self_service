@@ -6,7 +6,7 @@ app_email = "info@nesscale.com"
 app_license = "MIT"
 
 # Required applications
-required_apps = ["hrms"]
+required_apps = ["hrms", "lending"]
 
 # Includes in <head>
 # ------------------
