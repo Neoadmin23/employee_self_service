@@ -80,7 +80,7 @@ def get_loan_application_approval_details(name):
 @ess_validate(methods=["POST"])
 def approve_loan_application(name, remarks=None):
     """
-    Approve a Loan Application.
+    Approve a Loan Application. 
 
     Args:
         name: Loan Application document name
