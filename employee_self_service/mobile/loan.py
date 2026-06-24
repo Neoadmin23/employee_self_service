@@ -73,6 +73,7 @@ def get_my_loans():
                 "total_payment",
                 "total_principal_paid",
                 "monthly_repayment_amount",
+                "loan_application",
             ],
         )
 
@@ -120,6 +121,7 @@ def get_loan_detail(loan):
             "closure_date",
             "days_past_due",
             "is_npa",
+            "loan_application",
         ]
 
         loan_data = {field: loan_doc.get(field) for field in allowed_fields}
