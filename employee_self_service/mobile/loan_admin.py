@@ -14,7 +14,7 @@ def get_pending_loan_approvals():
     try:
         applications = frappe.get_all(
             "Loan Application",
-            filters={"status": "Open"},
+            # filters={"status": "Open"},
             fields=[
                 "name",
                 "applicant",
