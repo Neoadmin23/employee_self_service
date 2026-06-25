@@ -1,6 +1,12 @@
 import frappe
 from frappe import _
-from employee_self_service.mobile.api_utils import ess_validate
+from employee_self_service.mobile.api_utils import (
+    ess_validate,
+    exception_handel,
+    gen_response,
+    get_employee_by_user,
+    validate_employee_data,
+)
 from employee_self_service.mobile.ess_admin import _apply_approval_action
 
 
@@ -12,9 +18,13 @@ def get_pending_loan_approvals():
     Returns list of Loan Application records with status "Open".
     """
     try:
+        emp_data = get_employee_by_user(frappe.session.user, fields=["name", "company"])
+        if not emp_data:
+            return gen_response(500, "Employee does not exist")
+        validate_employee_data(emp_data)
+
         applications = frappe.get_all(
             "Loan Application",
-            # filters={"status": "Open"},
             fields=[
                 "name",
                 "applicant",
@@ -29,10 +39,29 @@ def get_pending_loan_approvals():
                 "status",
             ],
         )
-        return applications
+
+        loans = frappe.get_all(
+            "Loan",
+            fields=[
+                "name",
+                "loan_product",
+                "loan_amount",
+                "disbursed_amount",
+                "status",
+                "total_payment",
+                "total_principal_paid",
+                "monthly_repayment_amount",
+                "loan_application",
+            ],
+        )
+
+        return gen_response(
+            200,
+            "Loan applications and loans retrieved successfully",
+            {"applications": applications, "loans": loans},
+        )
     except Exception as e:
-        frappe.log_error()
-        frappe.throw(str(e))
+        return exception_handel(e)
 
 
 @frappe.whitelist()
