@@ -1,49 +1,31 @@
-# Copyright (c) 2024, Nesscale Solutions Private Limited and contributors
-# For license information, please see license.txt
-
-import json
-
 import frappe
-import requests
 from frappe.model.document import Document
+from employee_self_service.employee_self_service.doctype.push_notification.push_notification import _send_to_tokens
 
 
 class ESSNotificationLog(Document):
     def after_insert(self):
-        target_site_url = "https://notification.nesscale.com/api/method/ncs_nesscale.api.send_push_notification"
+        if not self.recipient:
+            return
 
-        erp_url = frappe.utils.get_url()
+        tokens = frappe.get_all(
+            "Employee Device Info",
+            filters={"user": self.recipient, "token": ["is", "set"]},
+            pluck="token",
+        )
+        if not tokens:
+            return
 
-        # Prepare the payload
-        payload = {
-            "product_name": "Nesscale ESS",
-            "subject": self.subject,
-            "message": self.message,
-            "notification_type": "info",
-            "tokens": [self.token],
-            "erp_url": erp_url,
-            "reference_document": self.reference_document,
-            "reference_name": self.reference_name,
-            "other_info": self.other_info,
-        }
-        # Set your headers for authentication (API key and secret)
-        headers = {"Content-Type": "application/json"}
+        frappe.enqueue(
+            "employee_self_service.employee_self_service.doctype.ess_notification_log.ess_notification_log.send_push_for_log",
+            queue="short",
+            tokens=tokens,
+            title=self.subject,
+            body=self.message,
+            reference_doctype=self.reference_document,
+            reference_name=self.reference_name,
+        )
 
-        try:
-            # Send the POST request
-            response = requests.post(
-                target_site_url, headers=headers, data=json.dumps(payload)
-            )
-            # Check the response
-            if response.status_code == 200:
-                # Notification sent successfully
-                pass
-            else:
-                frappe.log_error(
-                    title="ESS Push Notification Error",
-                    message=f"Failed to send notification. Status Code: {response.status_code}, Response: {response.text}",
-                )
-        except Exception:
-            frappe.log_error(
-                title="ESS Push Notification Error", message=frappe.get_traceback()
-            )
+
+def send_push_for_log(tokens, title, body, reference_doctype=None, reference_name=None):
+    _send_to_tokens(tokens, title, body, reference_doctype=reference_doctype, reference_name=reference_name)

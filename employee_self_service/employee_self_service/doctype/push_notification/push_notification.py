@@ -1,134 +1,96 @@
-# Copyright (c) 2022, Nesscale Solutions Private Limited and contributors
-# For license information, please see license.txt
-
 import json
 
 import frappe
 from frappe.model.document import Document
-from pyfcm import FCMNotification
+from frappe.utils.password import get_decrypted_password
+import firebase_admin
+from firebase_admin import credentials, messaging
+
+_firebase_app = None
+
+
+def get_firebase_app():
+    global _firebase_app
+    if _firebase_app:
+        return _firebase_app
+    raw = get_decrypted_password(
+        "Employee Self Service Settings",
+        "Employee Self Service Settings",
+        "firebase_service_account_json",
+    )
+    if not raw:
+        frappe.throw("Firebase Service Account JSON is not configured in Employee Self Service Settings")
+    cred = credentials.Certificate(json.loads(raw))
+    _firebase_app = firebase_admin.initialize_app(cred)
+    return _firebase_app
+
+
+def _send_to_tokens(tokens, title, body, notification_type=None, reference_doctype=None, reference_name=None):
+    get_firebase_app()
+    data = {
+        "notification_type": notification_type or "",
+        "reference_doctype": reference_doctype or "",
+        "reference_name": reference_name or "",
+    }
+    results = []
+    for token in tokens:
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(title=title, body=body),
+                data=data,
+                token=token,
+            )
+            message_id = messaging.send(message)
+            results.append({"token": token, "status": "sent", "id": message_id})
+        except messaging.UnregisteredError:
+            frappe.db.delete("Employee Device Info", {"token": token})
+            results.append({"token": token, "status": "invalid_token_removed"})
+        except Exception as e:
+            frappe.log_error(title="FCM Push Send Error", message=f"Token: {token}\n{frappe.get_traceback()}")
+            results.append({"token": token, "status": "failed", "error": str(e)})
+    return results
 
 
 class PushNotification(Document):
     def after_insert(self):
-        server_key = frappe.db.get_single_value(
-            "Employee Self Service Settings", "firebase_server_key"
-        )
-        if not server_key:
-            return
         if self.send_for == "Single User":
-            token = frappe.db.get_value(
-                "Employee Device Info",
-                filters={"user": self.user},
-                fieldname="token",
-            )
+            token = frappe.db.get_value("Employee Device Info", filters={"user": self.user}, fieldname="token")
             if token:
                 self.response = json.dumps(
-                    send_single_notification(
-                        token,
-                        self.title,
-                        self.message,
-                        self.user,
-                        self.notification_type,
-                    )
+                    _send_to_tokens([token], self.title, self.message, self.notification_type)
                 )
                 self.save()
 
         elif self.send_for == "Multiple User":
             users = [nu.user for nu in self.users]
-            registration_ids = frappe.db.get_list(
+            tokens = frappe.get_all(
                 "Employee Device Info",
-                filters=[
-                    ["Employee Device Info", "user", "in", users],
-                    ["Employee Device Info", "token", "is", "set"],
-                ],
-                fields=["token"],
+                filters=[["user", "in", users], ["token", "is", "set"]],
+                pluck="token",
             )
-            if registration_ids:
-                registration_ids = [token["token"] for token in registration_ids]
+            if tokens:
                 self.response = json.dumps(
-                    send_multiple_notification(
-                        registration_ids,
-                        users,
-                        self.title,
-                        self.message,
-                        self.notification_type,
-                    )
+                    _send_to_tokens(tokens, self.title, self.message, self.notification_type)
                 )
                 self.save()
+
         elif self.send_for == "All User":
-            registration_ids = frappe.db.get_list(
-                "Employee Device Info",
-                filters=[["Employee Device Info", "token", "is", "set"]],
-                fields=["token"],
-            )
-            if registration_ids:
-                registration_ids = [token["token"] for token in registration_ids]
+            tokens = frappe.get_all("Employee Device Info", filters={"token": ["is", "set"]}, pluck="token")
+            if tokens:
                 self.response = json.dumps(
-                    send_multiple_notification(
-                        registration_ids,
-                        self.title,
-                        self.message,
-                        self.notification_type,
-                    )
+                    _send_to_tokens(tokens, self.title, self.message, self.notification_type)
                 )
                 self.save()
 
 
 @frappe.whitelist()
-def send_single_notification(
-    registration_id,
-    title=None,
-    message=None,
-    user=None,
-    notification_type=None,
-):
-    server_key = frappe.db.get_single_value(
-        "Employee Self Service Settings", "firebase_server_key"
-    )
-
-    push_service = FCMNotification(api_key=server_key)
-    # push_service = FCMNotification(
-    #     api_key="AAAAPcJ19TQ:APA91bH0IMYIyGdAAhH0SCEoXHr1gS4jjeaZgCsIcjr5uF5adQqiPG-QARbOx6XS4XOB3W3Km65xJUBo1W6jg8uLYcuHKSMcu-U7QurQLuEEOXHAu9eH9eLYg0RDtNOqYwEAIoOwBHqF"
-    # )
-
-    registration_id = registration_id
-    message_title = title
-    message_body = message
-
-    data_message = {
-        "notification_type": notification_type,
-    }
-
-    return push_service.notify_single_device(
-        registration_id=registration_id,
-        message_title=message_title,
-        message_body=message_body,
-        data_message=data_message,
-    )
+def send_single_notification(registration_id, title=None, message=None, user=None, notification_type=None):
+    return _send_to_tokens([registration_id], title, message, notification_type)
 
 
 @frappe.whitelist()
-def send_multiple_notification(
-    registration_ids, users=None, title=None, message=None, notification_type=None
-):
-    server_key = frappe.db.get_single_value(
-        "Employee Self Service Settings", "firebase_server_key"
-    )
-    push_service = FCMNotification(api_key=server_key)
-    # push_service = FCMNotification(
-    #     api_key="AAAAPcJ19TQ:APA91bH0IMYIyGdAAhH0SCEoXHr1gS4jjeaZgCsIcjr5uF5adQqiPG-QARbOx6XS4XOB3W3Km65xJUBo1W6jg8uLYcuHKSMcu-U7QurQLuEEOXHAu9eH9eLYg0RDtNOqYwEAIoOwBHqF"
-    # )
-
-    registration_ids = registration_ids
-    message_title = title
-    message_body = message
-    data_message = {"notification_type": notification_type}
-    return push_service.notify_multiple_devices(
-        registration_ids=registration_ids,
-        message_title=message_title,
-        message_body=message_body,
-        data_message=data_message,
-    )
+def send_multiple_notification(registration_ids, users=None, title=None, message=None, notification_type=None):
+    return _send_to_tokens(registration_ids, title, message, notification_type)
 
 
 def create_push_notification(title, message, send_for, notification_type, user=None):
