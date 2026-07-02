@@ -725,22 +725,12 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 		checkin_date = getdate(now_datetime())
 		shift_assignment = get_active_shift_assignment(emp_data.get("name"), checkin_date)
 
-		frappe.log_error(
-			message=f"ESS Checkin - Shift Assignment lookup for {emp_data.get('name')}: {shift_assignment}",
-			title="ESS Checkin Debug - Shift Assignment"
-		)
-
 		if not shift_assignment:
 			return gen_response(500, "No shift has been assigned to you for today. Please contact HR.")
 
 		# Step 3: Get Shift Location from Shift Assignment
 		shift_type = shift_assignment.shift_type
 		shift_location = shift_assignment.shift_location
-
-		frappe.log_error(
-			message=f"ESS Checkin - Shift type: {shift_type}, Shift location: {shift_location}",
-			title="ESS Checkin Debug - Shift Details"
-		)
 
 		# Step 4: Fetch Shift Location document
 		if not shift_location:
@@ -760,17 +750,24 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 		if not location_latitude or not location_longitude or not checkin_radius:
 			return gen_response(500, "The work location is not configured correctly for attendance tracking. Please contact HR.")
 
-		frappe.log_error(
-			message=f"ESS Checkin - Shift location: {shift_location}, lat: {location_latitude}, long: {location_longitude}, radius: {checkin_radius}",
-			title="ESS Checkin Debug - Location Details"
-		)
+		try:
+			location_latitude = float(location_latitude)
+			location_longitude = float(location_longitude)
+			checkin_radius = float(checkin_radius)
+		except (TypeError, ValueError):
+			return gen_response(500, "The work location coordinates or radius are not in a valid format. Please contact HR.")
 
 		# Step 6: Calculate distance between employee coordinates and assigned Shift Location
 		if latitude and longitude:
-			distance = get_distance_between_coordinates(
-				float(latitude), float(longitude),
-				float(location_latitude), float(location_longitude)
-			)
+			try:
+				lat1 = float(latitude)
+				lon1 = float(longitude)
+				lat2 = float(location_latitude)
+				lon2 = float(location_longitude)
+			except Exception:
+				return gen_response(500, "Invalid GPS coordinates format.")
+
+			distance = get_distance_between_coordinates(lat1, lon1, lat2, lon2)
 
 			frappe.log_error(
 				message=f"ESS Checkin - Calculated distance: {distance} meters, allowed radius: {checkin_radius} meters",
@@ -781,10 +778,6 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 			if distance > checkin_radius:
 				return gen_response(500, f"You are outside the allowed check-in area. You are currently {round(distance)} meters away from your assigned work location.")
 		else:
-			frappe.log_error(
-				message=f"ESS Checkin - No GPS coordinates provided for employee {emp_data.get('name')}",
-				title="ESS Checkin Debug - Missing GPS"
-			)
 			return gen_response(500, "Location access is required for attendance. Please enable GPS and try again.")
 
 		# Step 8: Create Employee Checkin with forced values
@@ -796,21 +789,16 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 			time=now_datetime(),
 			shift=shift_type,
 			custom_checkin_location=shift_location,
-			latitude=latitude,
-			longitude=longitude,
+			latitude=lat1,
+			longitude=lon1,
 			device_id="mobile",
 		)
 		employee_checkin.insert(ignore_permissions=True)
 
-		frappe.log_error(
-			message=f"ESS Checkin - Employee Checkin created successfully for {emp_data.get('name')}",
-			title="ESS Checkin Debug - Success"
-		)
-
-		return gen_response(200, "Check-in recorded successfully.")
+		return gen_response(200, "Check-in recorded successfully.", employee_checkin.as_dict())
 	except Exception as e:
 		frappe.log_error(
-			message=f"ESS Checkin - Error: {str(e)}",
+			message=frappe.get_traceback(),
 			title="ESS Checkin Debug - Error"
 		)
 		return gen_response(500, "Unable to process your attendance request at this time. Please try again later or contact support if the issue persists.")
