@@ -60,7 +60,7 @@ def get_expense_claims():
 
             month_year = get_month_year_details(expense)
             expense["posting_date"] = expense.get("posting_date").strftime("%d-%m-%Y")
-            if month_year not in list(expense_data.keys())[::-1]:
+            if not month_year in list(expense_data.keys())[::-1]:
                 expense_data[month_year] = [expense]
             else:
                 expense_data[month_year].append(expense)
@@ -167,6 +167,7 @@ def get_expense_claim_type_totals():
         return exception_handler(e)
 
 
+
 @frappe.whitelist()
 def get_expense_type():
     try:
@@ -209,6 +210,7 @@ def apply_expense(**data):
             company=emp_data.get("company"),
             payable_account=payable_account,
             items=frappe.form_dict.items,
+            exchange_rate = 1
         )
         expense_doc.update(data)
         expense_doc.insert()

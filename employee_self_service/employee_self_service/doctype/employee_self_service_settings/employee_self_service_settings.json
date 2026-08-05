@@ -15,6 +15,19 @@
   "column_break_7qksp",
   "default_print_format",
   "geofencing_based_on",
+  "selling_settings_section",
+  "allow_user_to_change_rate",
+  "allow_user_to_add_discount",
+  "column_break_goaq",
+  "allow_user_to_change_uom",
+  "column_break_kxpj",
+  "visit_proof_required",
+  "hr_settings_section",
+  "required_medical_document",
+  "column_break_orrh",
+  "medical_leave_type",
+  "column_break_gpvb",
+  "allow_edit_profile",
   "section_break_xjas",
   "enable_ess_notification",
   "check_in_with_image",
@@ -254,12 +267,84 @@
    "fieldname": "show_stock_balance_in_item_list",
    "fieldtype": "Check",
    "label": "Show Stock Balance in Item List"
+  },
+  {
+   "default": "0",
+   "description": "When enabled, visit proof (image attachment) is mandatory while creating a Visit from the mobile app.",
+   "fieldname": "visit_proof_required",
+   "fieldtype": "Check",
+   "label": "Visit Proof Required"
+  },
+  {
+   "fieldname": "selling_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Selling Settings"
+  },
+  {
+   "fieldname": "column_break_goaq",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_kxpj",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "allow_user_to_change_rate",
+   "fieldtype": "Check",
+   "label": "Allow User to Change Rate"
+  },
+  {
+   "default": "1",
+   "fieldname": "allow_user_to_change_uom",
+   "fieldtype": "Check",
+   "label": "Allow User to Change UOM"
+  },
+  {
+   "fieldname": "hr_settings_section",
+   "fieldtype": "Section Break",
+   "label": "HR Settings"
+  },
+  {
+   "default": "0",
+   "fieldname": "required_medical_document",
+   "fieldtype": "Check",
+   "label": "Required Medical Document"
+  },
+  {
+   "fieldname": "column_break_orrh",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Select the leave type used for medical reasons when applying for leave.",
+   "fieldname": "medical_leave_type",
+   "fieldtype": "Link",
+   "label": "Medical Leave Type",
+   "mandatory_depends_on": "required_medical_document",
+   "options": "Leave Type"
+  },
+  {
+   "fieldname": "column_break_gpvb",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_edit_profile",
+   "fieldtype": "Check",
+   "label": "Allow Edit Profile"
+  },
+  {
+   "default": "0",
+   "fieldname": "allow_user_to_add_discount",
+   "fieldtype": "Check",
+   "label": "Allow User to Add Discount"
   }
  ],
+ "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2025-10-01 10:34:32.768262",
+ "modified": "2026-05-27 11:53:27.263168",
  "modified_by": "Administrator",
  "module": "Employee Self Service",
  "name": "Employee Self Service Settings",
@@ -276,6 +361,8 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

@@ -1,16 +1,23 @@
 import calendar
 import os
+import json
 
 import frappe
 from erpnext.accounts.utils import get_fiscal_year
 from frappe import _
 from frappe.auth import LoginManager
 from frappe.handler import upload_file
+from frappe.twofactor import (
+    authenticate_for_2factor,
+    confirm_otp_token,
+    should_run_2fa,
+)
 from frappe.utils import (
     add_days,
     cstr,
     date_diff,
     flt,
+    cint,
     fmt_money,
     get_date_str,
     get_first_day,
@@ -20,6 +27,7 @@ from frappe.utils import (
     nowdate,
     pretty_date,
     today,
+    cint,
 )
 
 from employee_self_service.employee_self_service.doctype.push_notification.push_notification import (
@@ -39,6 +47,7 @@ from employee_self_service.mobile.v1.api_utils import (
     get_till_date_holiday_month_wise,
     validate_employee_data,
 )
+from employee_self_service.mobile.v1.attendance import _get_attendance_summary
 from employee_self_service.mobile.v1.task import *
 from employee_self_service.mobile.v1.transactions import *
 from employee_self_service.utils import add_ess_comment
@@ -51,6 +60,29 @@ def login(usr, pwd, unique_id=None):
         login_manager.authenticate(usr, pwd)
         validate_employee(login_manager.user)
         emp_data = get_employee_by_user(login_manager.user, fields=["name", "gender"])
+
+        # Check if Two Factor Authentication is required for this user
+        if should_run_2fa(login_manager.user):
+            # Generate OTP and send it via the configured method (SMS / Email / OTP App)
+            authenticate_for_2factor(login_manager.user)
+            tmp_id = frappe.local.response.get("tmp_id")
+            verification = frappe.local.response.get("verification")
+
+            # Cache unique_id (device token) so it can be used after OTP verification
+            if tmp_id and unique_id:
+                frappe.cache.set(tmp_id + "_ess_unique_id", unique_id)
+                frappe.cache.expire(tmp_id + "_ess_unique_id", 300)
+
+            return gen_response(
+                200,
+                "Two factor authentication required",
+                {
+                    "two_factor_required": True,
+                    "tmp_id": tmp_id,
+                    "verification": verification,
+                },
+            )
+
         # Register device (throws exception if device is not valid)
         if unique_id:
             if not register_device(emp_data.get("name"), unique_id):
@@ -100,6 +132,60 @@ def register_device(employee, unique_id):
     return True
 
 
+@frappe.whitelist(allow_guest=True)
+def verify_2fa_otp(tmp_id, otp):
+    """
+    Verify the OTP submitted by the user during Two Factor Authentication.
+
+    Called after the initial `login` API returns a 202 with two_factor_required=True.
+    On success, returns the same response as a normal successful login.
+
+    Args:
+        tmp_id (str): Temporary session identifier returned by the login API.
+        otp   (str): One-time password entered by the user.
+    """
+    try:
+        # Retrieve the username that was cached during the initial login step
+        user = frappe.safe_decode(frappe.cache.get(tmp_id + "_usr"))
+        if not user:
+            return gen_response(401, "Login session has expired. Please login again.")
+
+        # Build a minimal LoginManager so confirm_otp_token can track attempts
+        login_manager = LoginManager()
+        login_manager.user = user
+
+        # Verify the OTP against the cached token / TOTP secret
+        if not confirm_otp_token(login_manager, otp=str(otp), tmp_id=tmp_id):
+            return gen_response(401, "Incorrect verification code. Please try again.")
+
+        # OTP is valid – ensure the user is still linked to an Employee record
+        validate_employee(user)
+        emp_data = get_employee_by_user(user, fields=["name", "gender"])
+
+        # Restore the unique_id (device token) that was cached during initial login
+        unique_id = frappe.safe_decode(frappe.cache.get(tmp_id + "_ess_unique_id")) or None
+        if unique_id:
+            if not register_device(emp_data.get("name"), unique_id):
+                return
+
+        # Complete the login session
+        login_manager.post_login()
+
+        if frappe.response.get("message") == "Logged In":
+            frappe.response["user"] = user
+            frappe.response["key_details"] = generate_key(user)
+            frappe.response["employee_id"] = emp_data.get("name")
+            frappe.response["gender"] = emp_data.get("gender")
+
+        gen_response(200, frappe.response.get("message", "Logged In"))
+    except frappe.AuthenticationError:
+        gen_response(500, frappe.response.get("message", "Authentication failed"))
+    except frappe.SecurityException:
+        gen_response(401, frappe.response.get("message", "Security error"))
+    except Exception as e:
+        return exception_handler(e)
+
+
 @frappe.whitelist()
 @ess_validate(methods=["POST"])
 def make_leave_application(*args, **kwargs):
@@ -112,6 +198,7 @@ def make_leave_application(*args, **kwargs):
         if not len(emp_data) >= 1:
             return gen_response(500, "Employee does not exists!")
         validate_employee_data(emp_data)
+
         leave_application_doc = frappe.get_doc(
             doctype="Leave Application",
             employee=emp_data.get("name"),
@@ -120,7 +207,7 @@ def make_leave_application(*args, **kwargs):
         )
         leave_application_doc.update(kwargs)
         leave_application_doc.insert()
-        gen_response(200, "Leave application successfully added!")
+        gen_response(200, "Leave application successfully added!", leave_application_doc.name)
     except Exception as e:
         return exception_handler(e)
 
@@ -189,7 +276,7 @@ def get_leave_type(from_date=None, to_date=None):
             from_date = today()
         emp_data = get_employee_by_user(frappe.session.user)
         leave_types = frappe.get_all(
-            "Leave Type", filters={}, fields=["name", "'0' as balance"]
+            "Leave Type", filters={}, fields=["name"]
         )
         for leave_type in leave_types:
             leave_type["balance"] = get_leave_balance_on(
@@ -202,6 +289,18 @@ def get_leave_type(from_date=None, to_date=None):
     except Exception as e:
         return exception_handler(e)
 
+@frappe.whitelist()
+@ess_validate(methods=["GET"])
+def medical_document_required_check(leave_type):
+    try:
+        setting = get_ess_settings()
+        if setting.required_medical_document and setting.medical_leave_type == leave_type:
+            return gen_response(200, "Medical document is required for this leave type!", {"medical_document_required": True})
+        
+        return gen_response(200, "Medical document Required Flag get successfully", {"medical_document_required": False})
+    
+    except Exception as e:
+        return exception_handler(e)
 
 @frappe.whitelist()
 @ess_validate(methods=["GET"])
@@ -215,26 +314,50 @@ def get_leave_application_list():
         leave_application_fields = [
             "name",
             "leave_type",
-            "DATE_FORMAT(from_date, '%d-%m-%Y') as from_date",
-            "DATE_FORMAT(to_date, '%d-%m-%Y') as to_date",
+            "from_date",
+            "to_date",
             "total_leave_days",
             "description",
             "status",
-            "DATE_FORMAT(posting_date, '%d-%m-%Y') as posting_date",
+            "posting_date",
             "half_day",
-            "DATE_FORMAT(half_day_date, '%d-%m-%Y') as half_day_date",
+            "half_day_date",
         ]
         upcoming_leaves = frappe.get_all(
             "Leave Application",
-            filters={"from_date": [">", today()], "employee": emp_data.get("name")},
+            or_filters = {"from_date": [">", today()], "status": ["!=", "Approved"]},
+            filters={"employee": emp_data.get("name")},
             fields=leave_application_fields,
         )
+        
+        # Format dates
+        for leave in upcoming_leaves:
+            if leave.get("from_date"):
+                leave["from_date"] = leave["from_date"].strftime("%d-%m-%Y")
+            if leave.get("to_date"):
+                leave["to_date"] = leave["to_date"].strftime("%d-%m-%Y")
+            if leave.get("posting_date"):
+                leave["posting_date"] = leave["posting_date"].strftime("%d-%m-%Y")
+            if leave.get("half_day_date"):
+                leave["half_day_date"] = leave["half_day_date"].strftime("%d-%m-%Y")
 
         taken_leaves = frappe.get_all(
             "Leave Application",
             fields=leave_application_fields,
-            filters={"from_date": ["<=", today()], "employee": emp_data.get("name")},
+            or_filters = {"from_date": ["<=", today()], "status": ["=", "Approved"]},
+            filters={"employee": emp_data.get("name")},
         )
+        
+        # Format dates
+        for leave in taken_leaves:
+            if leave.get("from_date"):
+                leave["from_date"] = leave["from_date"].strftime("%d-%m-%Y")
+            if leave.get("to_date"):
+                leave["to_date"] = leave["to_date"].strftime("%d-%m-%Y")
+            if leave.get("posting_date"):
+                leave["posting_date"] = leave["posting_date"].strftime("%d-%m-%Y")
+            if leave.get("half_day_date"):
+                leave["half_day_date"] = leave["half_day_date"].strftime("%d-%m-%Y")
         fiscal_year = get_fiscal_year(nowdate())[0]
         if not fiscal_year:
             return gen_response(500, "Fiscal year not set")
@@ -276,12 +399,25 @@ def get_leave_application(name):
             "from_date",
             "to_date",
             "posting_date",
-            "half_day_date",
+            "half_day_date"
         ]
 
         leave_application = frappe.db.get_value(
             "Leave Application", name, leave_application_fields, as_dict=True
         )
+
+        file_data = frappe.db.get_value(
+            "File",
+            {
+                "attached_to_doctype": "Leave Application",
+                "attached_to_name": name,
+                "attached_to_field": "medical_supporting_document",
+            },
+            ["file_name","name","file_url"],
+            as_dict=True,
+        )
+
+        leave_application["medical_supporting_document"] = file_data
 
         return gen_response(200, "Leave data getting successfully", leave_application)
     except Exception as e:
@@ -589,6 +725,10 @@ def get_dashboard():
             ),
             "enable_todo": settings.get("enable_todo"),
             "enable_modular_menu": settings.get("enable_modular_menu"),
+            "visit_proof_required": settings.get("visit_proof_required"),
+            "allow_user_to_change_rate": settings.get("allow_user_to_change_rate"),
+            "allow_user_to_change_uom": settings.get("allow_user_to_change_uom"),
+            "allow_user_to_add_discount": settings.get("allow_user_to_add_discount"),
         }
         # "approval_requests": get_workflow_documents(internal=True)
         dashboard_data["employee_image"] = emp_data.get("image")
@@ -618,14 +758,16 @@ def get_leave_balance_dashboard():
         return exception_handler(e)
 
 
+#moved into attendance.py file
 @frappe.whitelist()
 def get_attendance_details_dashboard():
     try:
         emp_data = get_employee_by_user(frappe.session.user, fields=["name", "company"])
-        attendance_details = get_attendance_details(emp_data)
-        return gen_response(
-            200, "Leave balance data get successfully", attendance_details
-        )
+        if not emp_data:
+            return gen_response(404, "Employee not found")
+        today_date = getdate()
+        summary = _get_attendance_summary(emp_data["name"], today_date.year, today_date.month)
+        return gen_response(200, "Attendance data get successfully", summary)
     except Exception as e:
         return exception_handler(e)
 
@@ -744,6 +886,7 @@ def get_attendance_details(emp_data, year=None, month=None):
 
 @frappe.whitelist()
 def run_attendance_report(employee, company):
+    from hrms.hr.report.monthly_attendance_sheet.monthly_attendance_sheet import execute
     filters = {
         "filter_based_on": "Month",
         "month": cstr(frappe.utils.getdate().month),
@@ -752,11 +895,10 @@ def run_attendance_report(employee, company):
         "employee": employee,
         "summarized_view": 1,
     }
-    from frappe.desk.query_report import run
 
-    attendance_report = run("Monthly Attendance Sheet", filters=filters)
-    if attendance_report.get("result"):
-        return attendance_report.get("result")[0]
+    columns, data, *_ = execute(filters)
+    if data:
+        return data[0]
 
 
 def get_latest_leave(dashboard_data, employee):
@@ -765,8 +907,8 @@ def get_latest_leave(dashboard_data, employee):
         filters={"employee": employee},
         fields=[
             "status",
-            "DATE_FORMAT(from_date, '%d-%m-%Y') AS from_date",
-            "DATE_FORMAT(to_date, '%d-%m-%Y') AS to_date",
+            "from_date",
+            "to_date",
             "name",
             "leave_type",
             "description",
@@ -774,7 +916,13 @@ def get_latest_leave(dashboard_data, employee):
         order_by="modified desc",
     )
     if len(leave_applications) >= 1:
-        dashboard_data["latest_leave"] = leave_applications[0]
+        latest = leave_applications[0]
+        # Format dates
+        if latest.get("from_date"):
+            latest["from_date"] = latest["from_date"].strftime("%d-%m-%Y")
+        if latest.get("to_date"):
+            latest["to_date"] = latest["to_date"].strftime("%d-%m-%Y")
+        dashboard_data["latest_leave"] = latest
 
 
 # def get_latest_expense(dashboard_data, employee):
@@ -1050,6 +1198,7 @@ def get_holiday_list(year=None):
                     "date": holiday_date.strftime("%d %b"),
                     "day": holiday_date.strftime("%A"),
                     "description": holiday.description,
+                    "holiday_date": holiday.holiday_date
                 }
             )
         return gen_response(200, "Holiday list get successfully", holiday_list)
@@ -1082,7 +1231,7 @@ def get_attendance_list(year=None, month=None):
             },
             fields=[
                 "name",
-                "DATE_FORMAT(attendance_date, '%d %W') AS attendance_date",
+                "attendance_date",
                 "status",
                 "working_hours",
                 "in_time",
@@ -1100,6 +1249,9 @@ def get_attendance_list(year=None, month=None):
         if user_time_zone != system_timezone:
             to_convert_timezone = True
         for attendance in employee_attendance_list:
+            # Format attendance date
+            if attendance.get("attendance_date"):
+                attendance["attendance_date"] = attendance["attendance_date"].strftime("%d %A")
             employee_checkin_details = []
             if to_convert_timezone:
                 if attendance["in_time"]:
@@ -1123,8 +1275,12 @@ def get_attendance_list(year=None, month=None):
                 employee_checkin_details = frappe.get_all(
                     "Employee Checkin",
                     filters={"attendance": attendance.get("name")},
-                    fields=["log_type", "time_format(time, '%h:%i%p') as time"],
+                    fields=["log_type", "time"],
                 )
+                # Format time
+                for checkin in employee_checkin_details:
+                    if checkin.get("time"):
+                        checkin["time"] = checkin["time"].strftime("%I:%M%p")
 
             attendance["employee_checkin_detail"] = employee_checkin_details
 
@@ -1145,7 +1301,7 @@ def get_attendance_list(year=None, month=None):
             "days_in_month": calendar.monthrange(int(year), int(month))[1],
             "present": present_count,
             "absent": absent_count,
-            "late": late_count,
+            "late": late_count
         }
         attendance_data = {
             "attendance_details": attendance_details,
@@ -1249,12 +1405,122 @@ def get_profile():
         employee_details["employee_image"] = frappe.get_cached_value(
             "Employee", emp_data.get("name"), "image"
         )
+        setting = get_ess_settings()
+        employee_details["allow_edit_profile"] = cint(
+            setting.allow_edit_profile
+        )
 
         return gen_response(200, "Profile get successfully", employee_details)
     except Exception as e:
         return exception_handler(e)
 
 
+@frappe.whitelist()
+@ess_validate(methods=["POST"])
+def update_profile(**kwargs):
+    try:
+        employee = get_employee_by_user(frappe.session.user)
+        validate_employee_data(employee)
+
+        employee_name = employee.get("name")
+
+        if frappe.db.exists(
+            "Employee Details Update Request",
+            {
+                "employee": employee_name,
+                "status": "Pending",
+            },
+        ):
+            frappe.throw(_("You already have a pending profile update request."))
+
+        field_map = {
+            "new_first_name": "first_name",
+            "gender": "gender",
+            "date_of_birth": "date_of_birth",
+            "date_of_joining": "date_of_joining",
+            "cell_number": "cell_number",
+            "personal_email": "personal_email",
+            "current_address": "current_address",
+            "emergency_phone_number": "emergency_phone_number",
+            "marital_status": "marital_status",
+            "blood_group": "blood_group",
+        }
+
+        emp_doc = frappe.get_doc("Employee", employee_name)
+
+        old_data = {}
+        new_data = {}
+
+        for request_key, employee_field in field_map.items():
+
+            new_value = kwargs.get(request_key)
+
+            if new_value in [None, ""]:
+                continue
+
+            old_value = emp_doc.get(employee_field)
+
+            if str(old_value or "") != str(new_value):
+                old_data[employee_field] = old_value or ""
+                new_data[employee_field] = new_value
+
+        education = kwargs.get("education", [])
+        if education:
+            old_education = frappe.get_all(
+                "Employee Education",
+                filters={"parent": employee_name},
+                fields=[
+                    "school_univ",
+                    "qualification",
+                    "level",
+                    "year_of_passing",
+                ],
+                order_by="idx asc",
+            )
+
+            new_education = [
+                row for row in education if row.get("school_univ")
+            ]
+
+            if old_education != new_education:
+                old_data["education"] = old_education
+                new_data["education"] = new_education
+
+        if not new_data:
+            return gen_response(
+                400,
+                "No changes found."
+            )
+
+        request_doc = frappe.get_doc({
+            "doctype": "Employee Details Update Request",
+            "employee": employee_name,
+            "data": json.dumps(
+                {
+                    "old": old_data,
+                    "new": new_data,
+                },
+                default=str,
+            ),
+        })
+        request_doc.insert()
+
+        return gen_response(
+            200,
+            "Profile update request submitted successfully.",
+            {
+                "name": request_doc.name
+            },
+        )
+
+    except frappe.PermissionError:
+        return gen_response(
+            403,
+            "Not permitted to update profile."
+        )
+    except Exception as e:
+        return exception_handler(e)
+    
 @frappe.whitelist()
 @ess_validate(methods=["POST"])
 def upload_documents():
@@ -1416,8 +1682,10 @@ def holiday_list(date=None):
     ]
 
     holidays = frappe.get_all(
-        "Holiday", filters=filters, fields=["'holiday' as title", "description"]
+        "Holiday", filters=filters, fields=["description"]
     )
+    for h in holidays:
+        h["title"] = "holiday"
 
     return holidays
 
@@ -1972,14 +2240,17 @@ def get_transactions_old(
 @ess_validate(methods=["GET"])
 def get_customer_list(start=0, page_length=10, filters=None):
     try:
+        if isinstance(filters, str):
+            filters = json.loads(filters)
         customer_list = frappe.get_list(
             "Customer",
             ["name", "customer_name", "mobile_no as phone"],
-            start=start,
+            start=cint(start),
             filters=filters,
-            page_length=page_length,
+            page_length=cint(page_length),
             order_by="modified desc",
         )
+        frappe.log_error(title="Customer List",message=str(customer_list))
         return gen_response(200, "Customer list get successfully", customer_list)
     except frappe.PermissionError:
         return gen_response(500, "Not permitted read customer")
@@ -2140,13 +2411,17 @@ def get_profile_detail_tabs():
         response = {}
 
         personal_details = {}
-        personal_details["date_of_birth"] = emp_doc.date_of_birth
+        personal_details["employee_name"] = emp_doc.employee_name
+        personal_details["date_of_joining"] = emp_doc.date_of_joining.strftime("%d-%m-%Y") if emp_doc.date_of_joining else ""
+        personal_details["date_of_birth"] = emp_doc.date_of_birth.strftime("%d-%m-%Y") if emp_doc.date_of_birth else ""
         personal_details["personal_email"] = emp_doc.personal_email
         personal_details["gender"] = emp_doc.gender
         personal_details["cell_number"] = emp_doc.cell_number
         personal_details["current_address"] = emp_doc.current_address
         personal_details["person_to_be_contacted"] = emp_doc.person_to_be_contacted
         personal_details["emergency_phone_number"] = emp_doc.emergency_phone_number
+        personal_details["marital_status"] = emp_doc.marital_status
+        personal_details["blood_group"] = emp_doc.blood_group
         response["personal_details"] = personal_details
 
         education_details = {}
@@ -2176,14 +2451,19 @@ def get_hr_policies():
         return exception_handler(e)
 
 
+# moved into the attendance.py file
 @frappe.whitelist()
 def get_attendance_details_by_month(year, month):
     try:
+        year, month = cint(year), cint(month)
+        today_date = getdate()
+        if (year, month) > (today_date.year, today_date.month):
+            return gen_response(400, "Cannot fetch attendance for a future month")
         emp_data = get_employee_by_user(frappe.session.user, fields=["name", "company"])
-        attendance_details = get_attendance_details(emp_data, year, month)
-        return gen_response(
-            200, "Leave balance data get successfully", attendance_details
-        )
+        if not emp_data:
+            return gen_response(404, "Employee not found")
+        summary = _get_attendance_summary(emp_data["name"], year, month)
+        return gen_response(200, "Attendance data get successfully", summary)
     except Exception as e:
         return exception_handler(e)
 
@@ -2204,7 +2484,7 @@ def get_attendance_list_by_date(date=None):
             },
             fields=[
                 "name",
-                "DATE_FORMAT(attendance_date, '%d %W') AS attendance_date",
+                "attendance_date",
                 "status",
                 "working_hours",
                 "in_time",
@@ -2215,6 +2495,16 @@ def get_attendance_list_by_date(date=None):
 
         if not employee_attendance_list:
             return gen_response(500, "no attendance found for this year and month", [])
+
+        user_time_zone = frappe.db.get_value("User", frappe.session.user, "time_zone")
+        system_timezone = get_system_timezone()
+        to_convert_timezone = False
+        if user_time_zone != system_timezone:
+            to_convert_timezone = True
+        for attendance in employee_attendance_list:
+            # Format attendance date
+            if attendance.get("attendance_date"):
+                attendance["attendance_date"] = attendance["attendance_date"].strftime("%d %A")
 
         user_time_zone = frappe.db.get_value("User", frappe.session.user, "time_zone")
         system_timezone = get_system_timezone()
@@ -2257,10 +2547,14 @@ def get_attendance_list_by_date(date=None):
                     filters={"attendance": attendance.get("name")},
                     fields=[
                         "log_type",
-                        "time_format(time, '%h:%i%p') as time",
+                        "time",
                         "location",
                     ],
                 )
+                # Format time
+                for checkin in employee_checkin_details:
+                    if checkin.get("time"):
+                        checkin["time"] = checkin["time"].strftime("%I:%M%p")
 
             attendance["employee_checkin_detail"] = employee_checkin_details
 
