@@ -10,6 +10,22 @@ def after_install():
     create_custom_fields()
     add_default_language_in_ess_settings()
     create_ess_admin_manager_role()
+    update_attendance_request_reason_options()
+
+
+def update_attendance_request_reason_options():
+    property_setter_name = "attendance_request-reason-options"
+    new_options = "Work From Home\nOn Duty\nLocation Exception"
+    if not frappe.db.exists("Property Setter", property_setter_name):
+        frappe.get_doc({
+            "doctype": "Property Setter",
+            "name": property_setter_name,
+            "doctype_or_field": "DocField",
+            "doc_type": "Attendance Request",
+            "field_name": "reason",
+            "property": "options",
+            "value": new_options,
+        }).insert(ignore_permissions=True)
 
 
 def after_migrate():

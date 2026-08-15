@@ -1,6 +1,15 @@
 import frappe
 
 CUSTOM_FIELDS = {
+    "Attendance Request": [
+        {
+            "fieldname": "location",
+            "label": "Location",
+            "fieldtype": "Link",
+            "options": "Shift Location",
+            "insert_after": "reason",
+        },
+    ],
     "Branch": [
         {
             "fieldname": "latitude",

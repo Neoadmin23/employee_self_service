@@ -15,7 +15,7 @@ def create_attendance_request(*args, **kwargs):
     data = {
         field: kwargs.get(field)
         for field in required_fields
-        + ["half_day", "include_holidays", "shift", "explanation"]
+        + ["half_day", "include_holidays", "shift", "explanation", "location"]
     }
     missing_fields = [field for field in required_fields if not data[field]]
 
@@ -96,6 +96,7 @@ def get_attendance_request_list(**data):
                 "shift",
                 "reason",
                 "explanation",
+                "location",
             ],
         )
 
@@ -153,6 +154,7 @@ def get_attendance_request(request_id=None):
                 "shift",
                 "reason",
                 "explanation",
+                "location",
             ],
             as_dict=True,
         )
