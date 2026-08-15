@@ -775,8 +775,20 @@ def create_employee_log(log_type, latitude=None, longitude=None, biometric_verif
 			)
 
 			# Step 7: Validate distance
-			if distance > checkin_radius:
-				return gen_response(500, f"You are outside the allowed check-in area. You are currently {round(distance)} meters away from your assigned work location.")
+		distance_km = round(distance / 1000, 1)
+		if distance > checkin_radius:
+			return gen_response(
+				403,
+				"Attendance Restricted",
+				{
+					"code": "LOCATION_RESTRICTED",
+					"title": "Attendance Restricted",
+					"message": f"You are currently {distance_km} km away from your assigned work location. Attendance can only be marked within the approved check-in area for this shift.",
+					"distance_meters": distance,
+					"distance_km": distance_km,
+					"allow_request": True,
+				},
+			)
 		else:
 			return gen_response(500, "Location access is required for attendance. Please enable GPS and try again.")
 
