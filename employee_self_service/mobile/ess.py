@@ -141,7 +141,7 @@ def make_leave_application(*args, **kwargs):
         )
         leave_application_doc.update(kwargs)
         leave_application_doc.insert()
-        leave_application_doc.submit()
+        
 
         messages = _get_server_messages()
 
