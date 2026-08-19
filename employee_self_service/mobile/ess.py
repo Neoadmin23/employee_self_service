@@ -142,9 +142,47 @@ def make_leave_application(*args, **kwargs):
         leave_application_doc.update(kwargs)
         leave_application_doc.insert()
         leave_application_doc.submit()
-        gen_response(200, "Leave Application Successfully Added")
+
+        messages = _get_server_messages()
+
+        gen_response(
+            200,
+            "Leave Application Successfully Added",
+            leave_application_doc
+        )
+
+        if messages:
+            frappe.local.response["messages"] = messages
+
     except Exception as e:
         return exception_handel(e)
+
+
+def _get_server_messages():
+    raw_messages = frappe.local.message_log or []
+    result = []
+    for msg in raw_messages:
+        if not isinstance(msg, dict):
+            continue
+        indicator = msg.get("indicator") or "blue"
+        result.append({
+            "type": _map_indicator_to_type(indicator),
+            "message": msg.get("message", ""),
+            "title": msg.get("title"),
+        })
+    frappe.clear_messages()
+    return result
+
+
+def _map_indicator_to_type(indicator):
+    mapping = {
+        "orange": "warning",
+        "red": "error",
+        "green": "success",
+        "blue": "info",
+        "yellow": "warning",
+    }
+    return mapping.get(indicator, "info")
 
 
 @frappe.whitelist()
