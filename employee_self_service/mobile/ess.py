@@ -141,7 +141,6 @@ def make_leave_application(*args, **kwargs):
         )
         leave_application_doc.update(kwargs)
         leave_application_doc.insert()
-        
 
         messages = _get_server_messages()
 
@@ -157,6 +156,111 @@ def make_leave_application(*args, **kwargs):
     except Exception as e:
         return exception_handel(e)
 
+
+@frappe.whitelist()
+@ess_validate(methods=["POST"])
+def validate_leave_application(
+    leave_type,
+    from_date,
+    to_date,
+    half_day=0,
+    half_day_date=None,
+    description=None,
+):
+    try:
+        from hrms.hr.doctype.leave_application.leave_application import (
+            get_leave_approver,
+        )
+
+        # Get employee from the currently authenticated ESS user
+        emp_data = get_employee_by_user(
+            frappe.session.user,
+            fields=["name", "company"],
+        )
+
+        if not emp_data:
+            return gen_response(
+                500,
+                "Employee not found for current user",
+            )
+
+        employee = emp_data.get("name")
+
+        validate_employee_data(emp_data)
+
+        doc = frappe.get_doc(
+            doctype="Leave Application",
+            employee=employee,
+            company=emp_data.get("company"),
+            leave_type=leave_type,
+            from_date=from_date,
+            to_date=to_date,
+            half_day=int(half_day),
+            half_day_date=half_day_date,
+            leave_approver=get_leave_approver(employee),
+            description=description,
+        )
+
+        # Calculate leave days using the existing HRMS function
+        is_lwp = frappe.db.get_value(
+            "Leave Type",
+            leave_type,
+            "is_lwp",
+        )
+
+        if not is_lwp:
+            from hrms.hr.doctype.leave_application.leave_application import (
+                get_number_of_leave_days,
+            )
+
+            doc.total_leave_days = get_number_of_leave_days(
+                employee=employee,
+                leave_type=leave_type,
+                from_date=from_date,
+                to_date=to_date,
+                half_day=int(half_day),
+                half_day_date=half_day_date,
+            )
+
+        # Clear any previous messages before running validation
+        frappe.clear_messages()
+
+        passed = False
+        blocking_error = None
+
+        try:
+            doc.validate()
+
+            if leave_type == "Annual Leave":
+                from centralhrms.centralhrms.annual_leave.validator import (
+                    validate_annual_leave,
+                )
+
+                validate_annual_leave(doc)
+
+            passed = True
+            blocking_error = None
+
+        except frappe.ValidationError as ve:
+            passed = False
+            blocking_error = str(ve)
+
+        messages = _get_server_messages()
+
+        return gen_response(
+            200,
+            "Validation completed",
+            {
+                "valid": passed,
+                "blocking_error": blocking_error,
+                "messages": messages,
+                "total_leave_days": doc.total_leave_days,
+            },
+        )
+
+    except Exception as e:
+        return exception_handel(e)
+    
 
 def _get_server_messages():
     raw_messages = frappe.local.message_log or []
