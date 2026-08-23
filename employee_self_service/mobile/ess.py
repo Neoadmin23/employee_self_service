@@ -127,35 +127,91 @@ def make_leave_application(*args, **kwargs):
     try:
         from hrms.hr.doctype.leave_application.leave_application import (
             get_leave_approver,
+            get_number_of_leave_days,
         )
 
+        # Clear any previous server messages.
+        # This API should not expose policy/warning messages.
+        frappe.clear_messages()
+
+        # Get employee from the currently authenticated ESS user
         emp_data = get_employee_by_user(frappe.session.user)
-        if not len(emp_data) >= 1:
-            return gen_response(500, "Employee does not exists")
+
+        if not emp_data or not len(emp_data) >= 1:
+            return gen_response(
+                500,
+                "Employee does not exists",
+            )
+
         validate_employee_data(emp_data)
+
+        employee = emp_data.get("name")
+        company = emp_data.get("company")
+
+        # Create Leave Application document
         leave_application_doc = frappe.get_doc(
             doctype="Leave Application",
-            employee=emp_data.get("name"),
-            company=emp_data.company,
-            leave_approver=get_leave_approver(emp_data.name),
+            employee=employee,
+            company=company,
+            leave_approver=get_leave_approver(employee),
         )
+
+        # Apply values received from ESS
         leave_application_doc.update(kwargs)
+
+        # ---------------------------------------------------------
+        # Calculate total leave days using the standard HRMS helper
+        # ---------------------------------------------------------
+        total_leave_days = get_number_of_leave_days(
+            employee=employee,
+            leave_type=leave_application_doc.leave_type,
+            from_date=leave_application_doc.from_date,
+            to_date=leave_application_doc.to_date,
+            half_day=int(leave_application_doc.half_day or 0),
+            half_day_date=leave_application_doc.half_day_date,
+        )
+
+        # Set calculated value on document before insert
+        leave_application_doc.total_leave_days = total_leave_days
+
+        # ---------------------------------------------------------
+        # Create the Leave Application
+        # ---------------------------------------------------------
         leave_application_doc.insert()
 
-        messages = _get_server_messages()
-
-        gen_response(
-            200,
-            "Leave Application Successfully Added",
-            leave_application_doc
+        # ---------------------------------------------------------
+        # Explicitly persist total_leave_days
+        #
+        # This makes sure the calculated value is stored even if
+        # another validation/custom hook changes the field during
+        # insert/validation.
+        # ---------------------------------------------------------
+        leave_application_doc.db_set(
+            "total_leave_days",
+            total_leave_days,
+            update_modified=False,
         )
 
-        if messages:
-            frappe.local.response["messages"] = messages
+        # Keep the document object in sync as well
+        leave_application_doc.total_leave_days = total_leave_days
+
+        # ---------------------------------------------------------
+        # Do NOT expose frappe warnings/messages here.
+        #
+        # Sandwich leave / policy warnings are handled by the
+        # separate validation API.
+        # ---------------------------------------------------------
+        frappe.clear_messages()
+
+        # Clean success response
+        return gen_response(
+            200,
+            "Leave Application Successfully Added",
+            leave_application_doc,
+        )
 
     except Exception as e:
         return exception_handel(e)
-
 
 @frappe.whitelist()
 @ess_validate(methods=["POST"])

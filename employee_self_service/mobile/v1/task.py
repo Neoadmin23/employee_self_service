@@ -172,6 +172,7 @@ def get_task_list(start=0, page_length=10, filters=None, today_task=False):
             frappe.throw(_("Not permitted to read Task"), frappe.PermissionError)
 
         filters = update_task_filters(filters, today_task)
+        filters.append(["Task", "_assign", "like", f"%{frappe.session.user}%"])
         tasks = frappe.get_list(
             "Task",
             fields=[
@@ -304,6 +305,14 @@ def get_task_by_id(task_id=None):
         if not task:
             return gen_response(404, "No task found", [])
 
+        assigned_to = task.get("assigned_to") or "[]"
+        try:
+            assigned_users = json.loads(assigned_to)
+        except Exception:
+            assigned_users = []
+        if frappe.session.user not in assigned_users:
+            return gen_response(403, "Not authorized to view this task", [])
+
         task["assigned_by"] = fetch_user(task.get("assigned_by"))
         task["completed_by"] = fetch_user(task.get("completed_by"))
         task["project_name"] = frappe.db.get_value(
@@ -344,18 +353,50 @@ def create_task(**kwargs):
         from frappe.desk.form import assign_to
 
         data = kwargs
-        task_doc = frappe.get_doc(doctype="Task")
-        task_doc.update(data)
-        task_doc.insert()
-        if data.get("assign_to"):
-            assign_to.add(
-                {
-                    "assign_to": data.get("assign_to"),
-                    "doctype": task_doc.doctype,
-                    "name": task_doc.name,
-                }
+
+        restricted_fields = {"owner", "_assign", "assigned_to", "assign_to"}
+        provided_restricted = set(data.keys()) & restricted_fields
+        if provided_restricted:
+            return gen_response(
+                500,
+                "These fields are not allowed: {0}".format(
+                    ", ".join(sorted(provided_restricted))
+                ),
             )
-        return gen_response(200, "Task has been created successfully")
+
+        allowed_fields = {
+            "subject",
+            "project",
+            "type",
+            "priority",
+            "description",
+            "exp_start_date",
+            "exp_end_date",
+            "expected_time",
+            "department",
+            "company",
+            "color",
+            "is_milestone",
+        }
+        filtered_data = {k: v for k, v in data.items() if k in allowed_fields}
+
+        filtered_data["owner"] = frappe.session.user
+
+        task_doc = frappe.get_doc(doctype="Task")
+        task_doc.update(filtered_data)
+        task_doc.insert()
+
+        assign_to.add(
+            {
+                "assign_to": frappe.session.user,
+                "doctype": task_doc.doctype,
+                "name": task_doc.name,
+            }
+        )
+
+        return gen_response(
+            200, "Task has been created successfully", {"name": task_doc.name}
+        )
     except frappe.PermissionError:
         return gen_response(500, "Not permitted for create task")
     except Exception as e:
@@ -369,18 +410,72 @@ def update_task(**kwargs):
         from frappe.desk.form import assign_to
 
         data = kwargs
-        task_doc = frappe.get_doc("Task", data.get("name"))
-        task_doc.update(data)
-        task_doc.save()
-        if data.get("assign_to"):
-            assign_to.add(
-                {
-                    "assign_to": data.get("assign_to"),
-                    "doctype": task_doc.doctype,
-                    "name": task_doc.name,
-                }
+
+        task_name = data.get("name")
+        if not task_name:
+            return gen_response(500, "Task name is required")
+
+        task_doc = frappe.get_doc("Task", task_name)
+
+        assigned_to = task_doc.get("_assign") or "[]"
+        try:
+            assigned_users = json.loads(assigned_to)
+        except Exception:
+            assigned_users = []
+        if frappe.session.user not in assigned_users:
+            return gen_response(403, "Not authorized to update this task")
+
+        restricted_fields = {
+            "owner",
+            "_assign",
+            "assigned_to",
+            "assign_to",
+            "company",
+            "department",
+            "project",
+            "name",
+            "docstatus",
+            "status",
+            "completed_by",
+            "completed_on",
+            "actual_time",
+            "total_costing_amount",
+            "total_expense_claim",
+            "total_billing_amount",
+            "lft",
+            "rgt",
+            "creation",
+            "modified",
+            "modified_by",
+        }
+        provided_restricted = set(data.keys()) & restricted_fields
+        if provided_restricted:
+            return gen_response(
+                500,
+                "These fields are not allowed: {0}".format(
+                    ", ".join(sorted(provided_restricted))
+                ),
             )
-        return gen_response(200, "Task has been updated successfully")
+
+        allowed_fields = {
+            "subject",
+            "type",
+            "priority",
+            "description",
+            "exp_start_date",
+            "exp_end_date",
+            "expected_time",
+            "color",
+            "is_milestone",
+        }
+        filtered_data = {k: v for k, v in data.items() if k in allowed_fields}
+
+        task_doc.update(filtered_data)
+        task_doc.save()
+
+        return gen_response(
+            200, "Task has been updated successfully", {"name": task_doc.name}
+        )
     except frappe.PermissionError:
         return gen_response(500, "Not permitted for update task")
     except Exception as e:
