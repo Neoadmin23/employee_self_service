@@ -131,6 +131,7 @@ def _sync_single_to_frappe(recipient, subject, message, reference_document, refe
                 link = None
 
         # Create Frappe Notification Log
+        frappe.flags.ignore_ess_notification_sync = True
         frappe_notification = frappe.get_doc({
             "doctype": "Notification Log",
             "for_user": recipient,
@@ -146,6 +147,7 @@ def _sync_single_to_frappe(recipient, subject, message, reference_document, refe
 
         frappe_notification.insert(ignore_permissions=True)
         frappe.db.commit()
+        frappe.flags.ignore_ess_notification_sync = False
 
         frappe.logger().info(
             f"Frappe Notification Log synced for recipient: {recipient}, subject: {subject}"

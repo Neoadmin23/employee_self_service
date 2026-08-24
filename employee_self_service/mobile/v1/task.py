@@ -164,6 +164,164 @@ def fetch_comments(task_id):
     return comments
 
 
+def send_task_notifications(task_doc, assigned_user, creator_user):
+    try:
+        if not assigned_user:
+            return
+
+        employee_name = frappe.db.get_value(
+            "Employee",
+            {"user_id": assigned_user},
+            "name"
+        )
+
+        if not employee_name:
+            frappe.log_error(
+                f"Employee not found for user: {assigned_user}",
+                "Task Notification"
+            )
+            return
+
+        reports_to_employee = frappe.db.get_value(
+            "Employee",
+            employee_name,
+            "reports_to"
+        )
+
+        manager_user = None
+
+        if reports_to_employee:
+            manager_user = frappe.db.get_value(
+                "Employee",
+                reports_to_employee,
+                "user_id"
+            )
+
+        created_any = False
+
+        # Notification for assigned employee
+        frappe.get_doc(
+            {
+                "doctype": "ESS Notification Log",
+                "notification_name": "Task Created",
+                "document_type": "Task",
+                "subject": f"Task Created: {task_doc.name}",
+                "message": (
+                    f"Your task '{task_doc.subject}' has been created."
+                ),
+                "recipient": assigned_user,
+                "reference_document": "Task",
+                "reference_name": task_doc.name,
+                "read": 0,
+            }
+        ).insert(ignore_permissions=True)
+        created_any = True
+
+        # Notification for reporting manager
+        if manager_user and manager_user != assigned_user:
+            employee_display_name = frappe.db.get_value(
+                "Employee",
+                {"user_id": assigned_user},
+                "employee_name"
+            ) or assigned_user
+
+            frappe.get_doc(
+                {
+                    "doctype": "ESS Notification Log",
+                    "notification_name": "Task Created",
+                    "document_type": "Task",
+                    "subject": f"New Task Created: {task_doc.name}",
+                    "message": (
+                        f"{employee_display_name} has created a new task: "
+                        f"{task_doc.subject}"
+                    ),
+                    "recipient": manager_user,
+                    "read": 0,
+                    "reference_document": "Task",
+                    "reference_name": task_doc.name,
+                }
+            ).insert(ignore_permissions=True)
+
+        # Remove old "Task Assigment" notifications caused by the generic
+        # ESS Notification rule firing on ToDo.after_insert for this task.
+        if created_any:
+            frappe.db.delete(
+                "ESS Notification Log",
+                {
+                    "notification_name": "Task Assigment",
+                    "reference_document": "Task",
+                    "reference_name": task_doc.name,
+                },
+            )
+
+            # Remove "Mention In Comment" ESS Notification Logs created by
+            # the feedback loop: ESS Notification Log -> Frappe Notification Log
+            # -> wildcard hook -> ESS Notification Log again.
+            frappe.db.delete(
+                "ESS Notification Log",
+                {
+                    "notification_name": "Mention In Comment",
+                    "document_type": "Task",
+                    "reference_name": task_doc.name,
+                },
+            )
+
+    except Exception:
+        frappe.log_error(
+            frappe.get_traceback(),
+            "Task Notification Error"
+        )
+
+
+@frappe.whitelist()
+@ess_validate(methods=["POST"])
+def add_task_comment(task_id=None, comment=None):
+    try:
+        if not task_id:
+            return gen_response(500, "Task ID is required")
+
+        if not comment or not comment.strip():
+            return gen_response(500, "Comment is required")
+
+        task_data = frappe.db.get_value(
+            "Task",
+            task_id,
+            ["name", "_assign", "owner"],
+            as_dict=True,
+        )
+
+        if not task_data:
+            return gen_response(404, "Task not found")
+
+        # Check whether logged-in employee is assigned to this task
+        validate_assign_task(task_data)
+
+        comment_doc = frappe.get_doc(
+            {
+                "doctype": "Comment",
+                "comment_type": "Comment",
+                "reference_doctype": "Task",
+                "reference_name": task_id,
+                "content": comment.strip(),
+            }
+        )
+
+        comment_doc.insert()
+
+        return gen_response(
+            200,
+            "Comment added successfully",
+            {
+                "name": comment_doc.name,
+            },
+        )
+
+    except frappe.PermissionError:
+        return gen_response(403, "Not permitted to add comment")
+
+    except Exception as e:
+        return exception_handler(e)
+
 @frappe.whitelist()
 @ess_validate(methods=["GET"])
 def get_task_list(start=0, page_length=10, filters=None, today_task=False):
@@ -384,14 +542,25 @@ def create_task(**kwargs):
 
         task_doc = frappe.get_doc(doctype="Task")
         task_doc.update(filtered_data)
-        task_doc.insert()
 
-        assign_to.add(
-            {
-                "assign_to": [frappe.session.user],
-                "doctype": task_doc.doctype,
-                "name": task_doc.name,
-            }
+        frappe.flags.skip_ess_task_notifications = True
+        try:
+            task_doc.insert()
+
+            assign_to.add(
+                {
+                    "assign_to": [frappe.session.user],
+                    "doctype": task_doc.doctype,
+                    "name": task_doc.name,
+                }
+            )
+        finally:
+            frappe.flags.skip_ess_task_notifications = False
+
+        send_task_notifications(
+            task_doc=task_doc,
+            assigned_user=frappe.session.user,
+            creator_user=frappe.session.user,
         )
 
         return gen_response(
@@ -437,7 +606,6 @@ def update_task(**kwargs):
             "company",
             "department",
             "project",
-            "name",
             "docstatus",
             "status",
             "completed_by",
@@ -497,8 +665,7 @@ def update_task(**kwargs):
         )
 
     except Exception as e:
-        return exception_handler(e)
-    
+        return exception_handler(e)    
 
 @frappe.whitelist()
 @ess_validate(methods=["GET"])

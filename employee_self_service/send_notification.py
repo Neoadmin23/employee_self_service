@@ -18,6 +18,8 @@ event_mapping = {
 
 @frappe.whitelist()
 def notification(doc, event):
+    if getattr(frappe.flags, "ignore_ess_notification_sync", False):
+        return
     try:
         if frappe.db.exists("DocType", "ESS Notification"):
             notification_processing(doc, event)
@@ -108,6 +110,11 @@ def _parse_receiver_by_document_field(s):
 
 
 def notification_processing(doc, event):
+    if (
+        getattr(frappe.flags, "skip_ess_task_notifications", False)
+        and doc.doctype in ("Task", "ToDo")
+    ):
+        return
     if not doc.flags.in_insert:
         # value change is not applicable in insert
         event_mapping["on_change"] = "Value Change"
