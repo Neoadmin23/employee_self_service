@@ -388,7 +388,7 @@ def create_task(**kwargs):
 
         assign_to.add(
             {
-                "assign_to": frappe.session.user,
+                "assign_to": [frappe.session.user],
                 "doctype": task_doc.doctype,
                 "name": task_doc.name,
             }
@@ -407,8 +407,6 @@ def create_task(**kwargs):
 @ess_validate(methods=["POST"])
 def update_task(**kwargs):
     try:
-        from frappe.desk.form import assign_to
-
         data = kwargs
 
         task_name = data.get("name")
@@ -417,13 +415,19 @@ def update_task(**kwargs):
 
         task_doc = frappe.get_doc("Task", task_name)
 
+        # Check whether logged-in employee is assigned to this task
         assigned_to = task_doc.get("_assign") or "[]"
+
         try:
             assigned_users = json.loads(assigned_to)
-        except Exception:
-            assigned_users = []
+        except (TypeError, json.JSONDecodeError):
+            return gen_response(500, "Unable to verify task assignment")
+
         if frappe.session.user not in assigned_users:
-            return gen_response(403, "Not authorized to update this task")
+            return gen_response(
+                403,
+                "Not authorized to update this task"
+            )
 
         restricted_fields = {
             "owner",
@@ -448,7 +452,9 @@ def update_task(**kwargs):
             "modified",
             "modified_by",
         }
+
         provided_restricted = set(data.keys()) & restricted_fields
+
         if provided_restricted:
             return gen_response(
                 500,
@@ -468,19 +474,31 @@ def update_task(**kwargs):
             "color",
             "is_milestone",
         }
-        filtered_data = {k: v for k, v in data.items() if k in allowed_fields}
+
+        filtered_data = {
+            k: v
+            for k, v in data.items()
+            if k in allowed_fields
+        }
 
         task_doc.update(filtered_data)
         task_doc.save()
 
         return gen_response(
-            200, "Task has been updated successfully", {"name": task_doc.name}
+            200,
+            "Task has been updated successfully",
+            {"name": task_doc.name}
         )
+
     except frappe.PermissionError:
-        return gen_response(500, "Not permitted for update task")
+        return gen_response(
+            500,
+            "Not permitted for update task"
+        )
+
     except Exception as e:
         return exception_handler(e)
-
+    
 
 @frappe.whitelist()
 @ess_validate(methods=["GET"])
